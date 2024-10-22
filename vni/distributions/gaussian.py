@@ -1,5 +1,4 @@
 import torch
-from torch.distributions import Normal
 
 from vni.base.distribution import BaseDistribution
 
@@ -21,33 +20,18 @@ class GaussianDistribution(BaseDistribution):
             torch.Tensor: A tensor of shape (batch_size, n_samples) with sampled values.
         """
 
-        if self.data is None:
-            raise KeyError("The required key 'data' is missing.")
+        # Create normal distributions for each mean and variance
+        std_devs = torch.sqrt(self.variances)
+        normal_dists = torch.distributions.Normal(
+            self.central_points.unsqueeze(1), std_devs.unsqueeze(1)
+        )
 
-        assert isinstance(self.data, torch.Tensor), "data must be torch.Tensor"
+        # Sample from the distributions (shape will be (batch_size, n_samples))
+        samples = normal_dists.sample((n_samples,)).transpose(
+            0, 1
+        )  # Transpose to get shape (batch_size, n_samples)
 
-        # Compute mean and variance for each batch (assuming shape [batch_size, ...])
-        means = (
-            self.data.mean(dim=-1)
-            if self.central_points is None
-            else self.central_points
-        )  # Mean for each batch along the last dimension
-        variances = (
-            self.data.var(dim=-1, unbiased=False)
-            if self.central_points is None
-            else torch.full((self.data.shape[0],), self.tolerance)
-        )  # Variance for each batch along the last dimension
+        # Clip the samples between start and stop
+        clipped_samples = torch.clamp(samples, min=start, max=stop)
 
-        # Ensure standard deviation (sqrt of variance)
-        std_devs = torch.sqrt(variances)
-
-        # Create normal distributions for each batch with their respective mean and std_dev
-        normal_dists = Normal(means, std_devs)
-
-        # Sample n_samples for each distribution (batch_size, n_samples)
-        samples = normal_dists.sample((n_samples,)).transpose(0, 1)
-
-        # Clip the samples between start and stop to create the truncated normal behavior
-        samples = torch.clamp(samples, min=start, max=stop)
-
-        return samples
+        return clipped_samples

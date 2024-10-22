@@ -1,16 +1,14 @@
+import seaborn as sns
 import torch
-
-from vni import DEFAULT_TOLERANCE
+from matplotlib import pyplot as plt
 
 
 class BaseDistribution(object):
-    def __init__(self):
+    def __init__(self, device):
         self.data = None
         self.central_points = None
-        self.tolerance = DEFAULT_TOLERANCE
-
-    def get_distribution_parameters(self):
-        raise NotImplementedError
+        self.variances = None
+        self.device = device
 
     def generate_data_from_distribution(
         self, n_samples: int, start: float, stop: float, **kwargs
@@ -40,8 +38,53 @@ class BaseDistribution(object):
         """Sets the data, replacing any existing data."""
         self.data = data
 
-    def set_central_points(self, delta_support_points: torch.Tensor):
-        self.central_points = delta_support_points
+    def set_parameters(
+        self, central_points: torch.Tensor, variances: torch.Tensor, **kwargs
+    ):
+        """
+        Sets the central points (means) and variances for the distribution.
 
-    def set_tolerance(self, tolerance: float):
-        self.tolerance = tolerance
+        Args:
+            central_points (torch.Tensor): A tensor containing the central points (means).
+            variances (torch.Tensor): A tensor containing the variances.
+            kwargs (dict): Additional keyword arguments.
+
+        Raises:
+            AssertionError: If central_points and variances do not have the same shape.
+        """
+        # Assert that central_points and variances have the same shape
+        assert central_points.shape == variances.shape, (
+            f"central_points and variances must have the same shape, but got "
+            f"central_points shape: {central_points.shape}, variances shape: {variances.shape}"
+        )
+
+        # Set the parameters
+        self.central_points = central_points
+        self.variances = variances
+
+    @staticmethod
+    def plot_distribution(distributions: torch.Tensor, n: int = 0):
+        """
+        Plots the probability density function (PDF) for the n-th batch of distributions.
+
+        Args:
+            distributions (torch.Tensor): A tensor of distributions.
+            n (int): Index of the batch to plot. Default is 0.
+        """
+        # Extract the n-th batch
+        first_batch = distributions[n].cpu().numpy()  # Convert to numpy if on GPU
+
+        # Plot the PDF using seaborn
+        plt.figure(figsize=(8, 6), dpi=500)
+        sns.kdeplot(first_batch, fill=True, color="g", label=f"PDF of Batch {n}")
+
+        # Set x-axis limits from 0 to 1
+        plt.xlim(0, 1)
+
+        # Adding labels and title
+        plt.xlabel("Value")
+        plt.ylabel("Density")
+        plt.legend()
+
+        # Show the plot
+        plt.show()

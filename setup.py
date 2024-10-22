@@ -20,8 +20,8 @@ CWD = pathlib.Path(__file__).absolute().parent
 setup(
     name="vni",
     version=get_version(),
-    description="Vectorized Numerical Interventions",
-    url="https://github.com/Giovannibriglia/VectorizedNumericalInterventions",
+    description="Vectorized Numerical Intervention",
+    url="https://github.com/Giovannibriglia/VectorizedNumericalIntervention",
     license="GPLv3",
     author="Giovanni Briglia",
     author_email="giovanni.briglia@unimore.it",

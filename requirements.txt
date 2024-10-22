@@ -1,0 +1,11 @@
+numpy>=1.26.3
+torch
+matplotlib>=3.9.2
+seaborn>=0.13.2
+scipy>=1.14.1
+pandas>=2.2.3
+tensordict>=0.6.0
+pytest
+black>24.3.0
+ufmt==2.0.0
+usort==1.0.4

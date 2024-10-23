@@ -1,49 +1,92 @@
 import pytest
 import torch
 
+from vni import DEFAULT_TOLERANCE
 from vni.distributions.gaussian import GaussianDistribution
 
 
 class TestGaussianDistribution:
-    def setup_method(self):
-        """Setup method to initialize the GaussianDistribution and test data."""
-        self.gaussian_dist = GaussianDistribution()
-        self.n_samples = 10
-        self.start = 0.0
-        self.stop = 10.0
-        self.data = torch.tensor([[1.0, 2.0], [4.0, 5.0], [7.0, 8.0]])  # Example data
+    @pytest.fixture
+    def gaussian_distribution(self):
+        """Fixture for initializing the GaussianDistribution class."""
+        return GaussianDistribution(device="cpu")
 
-    def test_add_data(self):
-        """Test if the data is added correctly."""
-        self.gaussian_dist.add_data(self.data)
-        assert (
-            self.gaussian_dist.data is not None
-        ), "Data should not be None after adding data."
-        assert (
-            self.gaussian_dist.data.shape == self.data.shape
-        ), f"Expected data shape {self.data.shape}, but got {self.gaussian_dist.data.shape}"
+    def test_generate_data_from_distribution(self, gaussian_distribution):
+        """Test generating data from the Gaussian distribution with clipping."""
+        # Set parameters: means (central points) and variances
+        central_points = torch.tensor([0.4, 0.6, 0.5])
+        variances = torch.tensor([0.01, 0.02, 0.03])
 
-    def test_output_size(self):
-        """Test if the output size is correct."""
-        self.gaussian_dist.add_data(self.data)
-        samples = self.gaussian_dist.generate_data_from_distribution(
-            self.n_samples, self.start, self.stop, data=self.data
+        gaussian_distribution.set_parameters(
+            central_points=central_points, variances=variances
         )
-        assert samples.shape == (
-            self.data.shape[0],
-            self.n_samples,
-        ), f"Expected shape ({self.data.shape[0]}, {self.n_samples}), but got {samples.shape}"
 
-    def test_values_within_bounds(self):
-        """Test if the generated samples are within the specified bounds (start, stop)."""
-        self.gaussian_dist.add_data(self.data)
-        samples = self.gaussian_dist.generate_data_from_distribution(
-            self.n_samples, self.start, self.stop, data=self.data
+        # Generate data
+        n_samples = 5
+        start, stop = 0.0, 1.0
+        generated_data = gaussian_distribution.generate_data_from_distribution(
+            n_samples=n_samples, start=start, stop=stop
         )
-        assert torch.all(samples >= self.start) and torch.all(
-            samples <= self.stop
-        ), "Some samples are out of bounds"
 
+        # Verify shape
+        assert generated_data.shape == (len(central_points), n_samples), (
+            f"Expected shape: ({len(central_points)}, {n_samples}), "
+            f"but got {generated_data.shape}"
+        )
 
-if __name__ == "__main__":
-    pytest.main()
+        # Verify that all values are within the clipping range
+        assert torch.all(generated_data >= start) and torch.all(
+            generated_data <= stop
+        ), f"Generated data contains values outside the range [{start}, {stop}]"
+
+    def test_generate_data_with_zero_variance(self, gaussian_distribution):
+        """Test that generating data with zero variance replaces the variances with DEFAULT_TOLERANCE."""
+        # Set parameters: means (central points) and zero variances
+        central_points = torch.tensor([0.4, 0.6, 0.5])
+        variances = torch.tensor([0.0, 0.0, 0.0])  # Zero variance
+        gaussian_distribution.set_parameters(
+            central_points=central_points, variances=variances
+        )
+
+        # Expected variances should replace zero variance with DEFAULT_TOLERANCE
+        expected_variances = torch.tensor(
+            [DEFAULT_TOLERANCE, DEFAULT_TOLERANCE, DEFAULT_TOLERANCE]
+        )
+        assert torch.equal(
+            gaussian_distribution.variances, expected_variances
+        ), "Variances were not replaced with DEFAULT_TOLERANCE where they were zero."
+
+        # Generate data
+        n_samples = 5
+        start, stop = 0.0, 1.0
+        generated_data = gaussian_distribution.generate_data_from_distribution(
+            n_samples=n_samples, start=start, stop=stop
+        )
+
+        # Verify that all values are within the clipping range
+        assert torch.all(generated_data >= start) and torch.all(
+            generated_data <= stop
+        ), f"Generated data contains values outside the range [{start}, {stop}]"
+
+    def test_clipping_of_generated_data(self, gaussian_distribution):
+        """Test that generated data is properly clipped between the specified range."""
+        # Set parameters: means and variances
+        central_points = torch.tensor(
+            [0.9, -0.5, 0.3]
+        )  # Values that should trigger clipping
+        variances = torch.tensor([0.01, 0.02, 0.03])
+        gaussian_distribution.set_parameters(
+            central_points=central_points, variances=variances
+        )
+
+        # Generate data
+        n_samples = 5
+        start, stop = 0.0, 1.0
+        generated_data = gaussian_distribution.generate_data_from_distribution(
+            n_samples=n_samples, start=start, stop=stop
+        )
+
+        # Verify that all values are within the clipping range
+        assert torch.all(generated_data >= start) and torch.all(
+            generated_data <= stop
+        ), f"Generated data contains values outside the range [{start}, {stop}]"

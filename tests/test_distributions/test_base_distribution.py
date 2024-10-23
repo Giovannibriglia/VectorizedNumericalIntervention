@@ -6,7 +6,7 @@ from vni import DEFAULT_TOLERANCE
 from vni.base.distribution import BaseDistribution
 
 
-class TestBaseDistributions:
+class TestBaseDistribution:
     @pytest.fixture
     def base_distribution(self):
         """Fixture for initializing the BaseDistribution class."""
@@ -18,7 +18,7 @@ class TestBaseDistributions:
         variances = torch.tensor([0.02, 0.0, 0.01])  # One zero variance
 
         base_distribution.set_parameters(
-            central_points=central_points, variances=variances
+            central_points=central_points, standard_deviations=variances
         )
 
         # Expected variances should replace the zero variance with DEFAULT_TOLERANCE
@@ -28,7 +28,7 @@ class TestBaseDistributions:
             base_distribution.central_points, central_points
         ), "Central points were not set correctly."
         assert torch.equal(
-            base_distribution.variances, expected_variances
+            base_distribution.standard_deviations, expected_variances
         ), "Variances were not set correctly."
 
     def test_set_parameters_shape_mismatch(self, base_distribution):
@@ -38,7 +38,7 @@ class TestBaseDistributions:
 
         with pytest.raises(AssertionError):
             base_distribution.set_parameters(
-                central_points=central_points, variances=variances
+                central_points=central_points, standard_deviations=variances
             )
 
     def test_add_data(self, base_distribution):
@@ -71,7 +71,16 @@ class TestBaseDistributions:
     def test_plot_distribution(self, base_distribution):
         """Test the plot_distribution function."""
         # Generate sample data
-        sample_data = torch.rand((10, 100))  # 10 batches of 100 samples
+        # Broadcast the mean and std to have the same shape (N, n_samples)
+        mean = torch.tensor([0.5, 0.3], device="cpu")
+        std = torch.tensor([0.05, 0.02], device="cpu")
+        n_samples = 1000
+
+        mean_expanded = mean.unsqueeze(1).expand(-1, n_samples).to("cpu")
+        std_expanded = std.unsqueeze(1).expand(-1, n_samples).to("cpu")
+
+        # Generate normal distributions for each mean and std
+        sample_data = torch.normal(mean=mean_expanded, std=std_expanded).to("cpu")
         # Plot for batch 0
         BaseDistribution.plot_distribution(sample_data, n=0)
         plt.close()  # Close the plot after the test to avoid display issues

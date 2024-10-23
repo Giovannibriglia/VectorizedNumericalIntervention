@@ -13,12 +13,12 @@ class TestGaussianDistribution:
 
     def test_generate_data_from_distribution(self, gaussian_distribution):
         """Test generating data from the Gaussian distribution with clipping."""
-        # Set parameters: means (central points) and variances
+        # Set parameters: means (central points) and standard_deviations
         central_points = torch.tensor([0.4, 0.6, 0.5])
-        variances = torch.tensor([0.01, 0.02, 0.03])
+        standard_deviations = torch.tensor([0.01, 0.02, 0.03])
 
         gaussian_distribution.set_parameters(
-            central_points=central_points, variances=variances
+            central_points=central_points, standard_deviations=standard_deviations
         )
 
         # Generate data
@@ -39,22 +39,22 @@ class TestGaussianDistribution:
             generated_data <= stop
         ), f"Generated data contains values outside the range [{start}, {stop}]"
 
-    def test_generate_data_with_zero_variance(self, gaussian_distribution):
-        """Test that generating data with zero variance replaces the variances with DEFAULT_TOLERANCE."""
-        # Set parameters: means (central points) and zero variances
+    def test_generate_data_with_zero_std(self, gaussian_distribution):
+        """Test that generating data with zero std replaces the standard_deviations with DEFAULT_TOLERANCE."""
+        # Set parameters: means (central points) and zero stds
         central_points = torch.tensor([0.4, 0.6, 0.5])
-        variances = torch.tensor([0.0, 0.0, 0.0])  # Zero variance
+        standard_deviations = torch.tensor([0.0, 0.0, 0.0])  # Zero standard_deviations
         gaussian_distribution.set_parameters(
-            central_points=central_points, variances=variances
+            central_points=central_points, standard_deviations=standard_deviations
         )
 
-        # Expected variances should replace zero variance with DEFAULT_TOLERANCE
-        expected_variances = torch.tensor(
+        # Expected stds should replace zero stds with DEFAULT_TOLERANCE
+        expected_stds = torch.tensor(
             [DEFAULT_TOLERANCE, DEFAULT_TOLERANCE, DEFAULT_TOLERANCE]
         )
         assert torch.equal(
-            gaussian_distribution.variances, expected_variances
-        ), "Variances were not replaced with DEFAULT_TOLERANCE where they were zero."
+            gaussian_distribution.standard_deviations, expected_stds
+        ), "Standard deviations were not replaced with DEFAULT_TOLERANCE where they were zero."
 
         # Generate data
         n_samples = 5
@@ -70,13 +70,13 @@ class TestGaussianDistribution:
 
     def test_clipping_of_generated_data(self, gaussian_distribution):
         """Test that generated data is properly clipped between the specified range."""
-        # Set parameters: means and variances
+        # Set parameters: means and standard_deviations
         central_points = torch.tensor(
             [0.9, -0.5, 0.3]
         )  # Values that should trigger clipping
-        variances = torch.tensor([0.01, 0.02, 0.03])
+        standard_deviations = torch.tensor([0.01, 0.02, 0.03])
         gaussian_distribution.set_parameters(
-            central_points=central_points, variances=variances
+            central_points=central_points, standard_deviations=standard_deviations
         )
 
         # Generate data

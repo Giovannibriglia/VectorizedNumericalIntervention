@@ -34,4 +34,7 @@ class GaussianDistribution(BaseDistribution):
         # Clip the samples between start and stop
         clipped_samples = torch.clamp(samples, min=start, max=stop)
 
+        # Remove the last dimension if it's 1 (e.g., from shape (batch_size, n_samples, 1) to (batch_size, n_samples))
+        clipped_samples = clipped_samples.squeeze(-1)  # Squeeze the last dimension
+
         return clipped_samples

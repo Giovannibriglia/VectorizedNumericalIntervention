@@ -2,6 +2,8 @@ import seaborn as sns
 import torch
 from matplotlib import pyplot as plt
 
+from vni import DEFAULT_TOLERANCE
+
 
 class BaseDistribution(object):
     def __init__(self, device):
@@ -43,6 +45,7 @@ class BaseDistribution(object):
     ):
         """
         Sets the central points (means) and variances for the distribution.
+        If any variances are zero, they will be set to a small positive tolerance (DEFAULT_TOLERANCE).
 
         Args:
             central_points (torch.Tensor): A tensor containing the central points (means).
@@ -57,6 +60,11 @@ class BaseDistribution(object):
             f"central_points and variances must have the same shape, but got "
             f"central_points shape: {central_points.shape}, variances shape: {variances.shape}"
         )
+
+        tolerance = kwargs.pop("tolerance", DEFAULT_TOLERANCE)
+
+        # Replace zero variances with the default tolerance
+        variances = torch.where(variances == 0, torch.tensor(tolerance), variances)
 
         # Set the parameters
         self.central_points = central_points

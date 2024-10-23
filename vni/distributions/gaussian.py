@@ -20,10 +20,12 @@ class GaussianDistribution(BaseDistribution):
             torch.Tensor: A tensor of shape (batch_size, n_samples) with sampled values.
         """
 
-        # Create normal distributions for each mean and variance
-        std_devs = torch.sqrt(self.variances)
+        assert (
+            self.central_points.shape == self.standard_deviations.shape
+        ), "Mean and std tensors must have the same shape."
+
         normal_dists = torch.distributions.Normal(
-            self.central_points.unsqueeze(1), std_devs.unsqueeze(1)
+            self.central_points.unsqueeze(1), self.standard_deviations.unsqueeze(1)
         )
 
         # Sample from the distributions (shape will be (batch_size, n_samples))

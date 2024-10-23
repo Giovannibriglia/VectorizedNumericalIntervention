@@ -9,7 +9,7 @@ class BaseDistribution(object):
     def __init__(self, device):
         self.data = None
         self.central_points = None
-        self.variances = None
+        self.standard_deviations = None
         self.device = device
 
     def generate_data_from_distribution(
@@ -41,7 +41,7 @@ class BaseDistribution(object):
         self.data = data
 
     def set_parameters(
-        self, central_points: torch.Tensor, variances: torch.Tensor, **kwargs
+        self, central_points: torch.Tensor, standard_deviations: torch.Tensor, **kwargs
     ):
         """
         Sets the central points (means) and variances for the distribution.
@@ -49,26 +49,28 @@ class BaseDistribution(object):
 
         Args:
             central_points (torch.Tensor): A tensor containing the central points (means).
-            variances (torch.Tensor): A tensor containing the variances.
+            standard_deviations (torch.Tensor): A tensor containing the standard deviations.
             kwargs (dict): Additional keyword arguments.
 
         Raises:
             AssertionError: If central_points and variances do not have the same shape.
         """
         # Assert that central_points and variances have the same shape
-        assert central_points.shape == variances.shape, (
+        assert central_points.shape == standard_deviations.shape, (
             f"central_points and variances must have the same shape, but got "
-            f"central_points shape: {central_points.shape}, variances shape: {variances.shape}"
+            f"central_points shape: {central_points.shape}, variances shape: {standard_deviations.shape}"
         )
 
         tolerance = kwargs.pop("tolerance", DEFAULT_TOLERANCE)
 
         # Replace zero variances with the default tolerance
-        variances = torch.where(variances == 0, torch.tensor(tolerance), variances)
+        standard_deviations = torch.where(
+            standard_deviations == 0, torch.tensor(tolerance), standard_deviations
+        )
 
         # Set the parameters
         self.central_points = central_points
-        self.variances = variances
+        self.standard_deviations = standard_deviations
 
     @staticmethod
     def plot_distribution(distributions: torch.Tensor, n: int = 0):

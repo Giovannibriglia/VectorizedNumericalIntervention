@@ -1,4 +1,6 @@
 
+![Architecture](architecture.png)
+
 # To-Do List
 
 ## High Priority

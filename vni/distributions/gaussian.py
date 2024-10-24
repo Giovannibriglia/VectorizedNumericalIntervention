@@ -5,7 +5,7 @@ from vni.base.distribution import BaseDistribution
 
 class GaussianDistribution(BaseDistribution):
     def generate_data_from_distribution(
-        self, n_samples: int, start: float, stop: float, **kwargs
+        self, n_samples: int, start: float = None, stop: float = None, **kwargs
     ):
         """
         Generates a batch of tensors based on normal distributions, each with its own mean and variance
@@ -31,12 +31,15 @@ class GaussianDistribution(BaseDistribution):
         # Sample from the distributions (shape will be (batch_size, n_samples))
         samples = normal_dists.sample((n_samples,)).transpose(
             0, 1
-        )  # Transpose to get shape (batch_size, n_samples)
+        )  # (batch_size, n_samples)
 
-        # Clip the samples between start and stop
-        clipped_samples = torch.clamp(samples, min=start, max=stop)
+        if start is not None and stop is not None:
+            # Clip the samples between start and stop
+            samples = torch.clamp(samples, min=start, max=stop)
 
-        # Remove the last dimension if it's 1 (e.g., from shape (batch_size, n_samples, 1) to (batch_size, n_samples))
-        clipped_samples = clipped_samples.squeeze(-1)  # Squeeze the last dimension
+        # Ensure that the output has shape (batch_size, n_samples)
+        samples = samples.view(
+            self.central_points.shape[0], n_samples
+        )  # Reshape to (batch_size, n_samples)
 
-        return clipped_samples
+        return samples

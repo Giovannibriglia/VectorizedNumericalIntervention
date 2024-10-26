@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from vni import DEFAULT_TOLERANCE
-from vni.distributions.gaussian import GaussianDistribution
+from vni.distributions.multivariate_normal import GaussianDistribution
 
 
 class TestGaussianDistribution:
@@ -24,7 +24,7 @@ class TestGaussianDistribution:
         # Generate data
         n_samples = 5
         start, stop = 0.0, 1.0
-        generated_data = gaussian_distribution.generate_data_from_distribution(
+        generated_data = gaussian_distribution.sample(
             n_samples=n_samples, start=start, stop=stop
         )
 
@@ -59,7 +59,7 @@ class TestGaussianDistribution:
         # Generate data
         n_samples = 5
         start, stop = 0.0, 1.0
-        generated_data = gaussian_distribution.generate_data_from_distribution(
+        generated_data = gaussian_distribution.sample(
             n_samples=n_samples, start=start, stop=stop
         )
 
@@ -82,7 +82,7 @@ class TestGaussianDistribution:
         # Generate data
         n_samples = 5
         start, stop = 0.0, 1.0
-        generated_data = gaussian_distribution.generate_data_from_distribution(
+        generated_data = gaussian_distribution.sample(
             n_samples=n_samples, start=start, stop=stop
         )
 

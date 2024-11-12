@@ -3,7 +3,7 @@
   <component name="Black">
     <option name="enabledOnReformat" value="true" />
     <option name="enabledOnSave" value="true" />
-    <option name="sdkName" value="Python 3.10 (VectorizedNumericalIntervention)" />
+    <option name="sdkName" value="Python 3.12 (VectorizedNumericalIntervention)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (VectorizedNumericalIntervention)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.12 (VectorizedNumericalIntervention)" project-jdk-type="Python SDK" />
 </project>

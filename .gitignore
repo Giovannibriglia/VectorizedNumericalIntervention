@@ -1,10 +1,7 @@
-cpd.py
-example_ok.py
-example_ok2.py
+
 cuda_test.py
 
-vni/base/pipeline.py
-vni/examples/df_example.pkl
+data/*
 
 .venv
 architecture.drawio

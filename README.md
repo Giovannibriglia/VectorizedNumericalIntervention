@@ -1,16 +1,28 @@
 
 ![Architecture](architecture.png)
 
-# To-Do List
+## To-Do List
 
-## High Priority
-- [ ] Use both estimator and distribution through cpds
+### VNI
+- [x] Handle cpds computation
+- [x] Handle intervention
+- [ ] Handle high dimensional data in VNI
+- [ ] Develop tests
+- [ ] Handle Query in Batch
+- [ ] Define new interventional distributions
+- [ ] Add visualization plots
 
-## Medium Priority
-- [ ] Add new estimators
-- [ ] Add new distributions
-- [ ] Add plot parts
-- [ ] Handle more data input in manager
+### KDE
+- [ ] Develop tests
+- [ ] Handle Query in Batch
+- [ ] New kernels
 
-## Low Priority
+### Usage
+- [ ] Prepare benchmark
+- [ ] Usage for benchmark
+- [ ] Usage for single prediction vs batch prediction
+
+### Repo
+- [ ] Update architecture scheme
 - [ ] Documentations
+- [ ] Website

@@ -1,4 +1,3 @@
-# import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 from tqdm import tqdm
@@ -26,8 +25,14 @@ observed_Y = torch.tensor(
     df[target_column].iloc[:n_samples].values, dtype=torch.float16, device="cpu"
 ).view(-1, 1)
 
+intervention_indices = df.columns.get_loc("agent_0_reward")
+intervention_indices = (
+    [intervention_indices]
+    if isinstance(intervention_indices, int)
+    else intervention_indices
+)
 # Initialize VNI object with the observed data
-vni = VNI(observed_X, observed_Y)
+vni = VNI(observed_X, observed_Y, intervention_indices)
 
 mean_error = torch.tensor(0, dtype=torch.float32, device=device)
 
@@ -40,28 +45,27 @@ for n, row in tqdm(df.iterrows(), total=len(df)):
         row[target_column], dtype=torch.float16, device=device
     )  # True Y value
 
+    intervention_values = torch.tensor(
+        row.iloc[intervention_indices].values, dtype=torch.float16, device=device
+    )
+
     # Compute conditional PDF P(Y | X = x_value) over y_values
-    conditional_pdf, y_values = vni.compute_conditional_pdf(x_value)
+    conditional_pdf, y_values = vni.compute_conditional_pdf(
+        x_value, intervention_values=None  # intervention_values
+    )
     # print((max(conditional_pdf.cpu().numpy()) - y_true) ** 2)
     mean_error += (max(conditional_pdf.cpu().numpy()) - y_true) ** 2
 
-    """# Plot the result
-    plt.plot(
-        y_values.cpu().numpy(), conditional_pdf.cpu().numpy(), label=f"P(Y | X = x)"
+    vni.plot_pdf(conditional_pdf, y_values, y_true, do=False)
+
+    # Compute conditional PDF P(Y | X = x_value) over y_values
+    conditional_pdf, y_values = vni.compute_conditional_pdf(
+        x_value, intervention_values=intervention_values
     )
-    plt.vlines(
-        y_true.cpu().numpy(),
-        min(conditional_pdf.cpu().numpy()),
-        max(conditional_pdf.cpu().numpy()),
-        colors="r",
-        linestyles="dashed",
-        label="Ground Truth",
-    )
-    plt.xlabel("Y")
-    plt.ylabel("P(Y | X = x)")
-    plt.title("Conditional PDF P(Y | X = x) over Possible Values of Y")
-    plt.legend()
-    plt.show()"""
+    # print((max(conditional_pdf.cpu().numpy()) - y_true) ** 2)
+    mean_error += (max(conditional_pdf.cpu().numpy()) - y_true) ** 2
+
+    vni.plot_pdf(conditional_pdf, y_values, y_true, do=True)
 
 print("MSE error: ", mean_error.item() / len(df))
 

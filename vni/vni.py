@@ -1,11 +1,19 @@
+from typing import List
+
 import torch
+from matplotlib import pyplot as plt
 
 from vni.kde.gaussian_kernel import GaussianKDE
 
 
 class VNI:
     def __init__(
-        self, X_prior: torch.Tensor, Y_prior: torch.Tensor, n_samples_Y: int = 100
+        self,
+        X_prior: torch.Tensor,
+        Y_prior: torch.Tensor,
+        intervention_indices: List = None,
+        n_samples_Y: int = 100,
+        **kwargs
     ):
         assert (
             X_prior.shape[0] == Y_prior.shape[0]
@@ -14,8 +22,15 @@ class VNI:
             X_prior.device == Y_prior.device
         ), "X_prior and Y_prior must have the same device"
 
+        assert isinstance(
+            intervention_indices, list
+        ), "intervention_indices_X must be a list"
+
         self.device = "cuda"  # "cuda" if torch.cuda.is_available() else "cpu"
         self.n_samples_Y = n_samples_Y
+
+        self.intervention_indices = intervention_indices or []
+        self.intervention_std = 0.1
 
         self.kde = GaussianKDE(bandwidth=0.5, device=self.device)
 
@@ -67,10 +82,36 @@ class VNI:
             -1, 1
         )  # self.kde.sample(self.Y_prior, self.n_samples_Y)
 
-    def compute_conditional_pdf(self, X_obs: torch.Tensor, Y_seen: torch.Tensor = None):
+    def set_intervention_indices(self, intervention_indices_X: List):
+        assert isinstance(
+            intervention_indices_X, list
+        ), "intervention_indices_X must be a list"
+
+        self.intervention_indices = intervention_indices_X or []
+
+    def compute_conditional_pdf(
+        self,
+        X_obs: torch.Tensor,
+        intervention_values: torch.Tensor = None,
+        Y_seen: torch.Tensor = None,
+    ):
         y_values = Y_seen if Y_seen is not None else self.Y_values
 
-        x_value_expanded = X_obs.expand(y_values.shape[0], -1)
+        x_value_expanded = X_obs.repeat(y_values.shape[0], 1)
+
+        # Apply Gaussian-distributed interventions to x_value_expanded
+        if intervention_values is not None and self.intervention_indices:
+            for idx, intervention_value in zip(
+                self.intervention_indices, intervention_values
+            ):
+                # Replace each intervention index in x_value_expanded with Gaussian samples
+                gaussian_samples = torch.normal(
+                    mean=intervention_value,
+                    std=self.intervention_std,
+                    size=(y_values.shape[0],),
+                    device=self.device,
+                )
+                x_value_expanded[:, idx] = gaussian_samples
 
         batch_size, x_dim = x_value_expanded.shape
         _, y_dim = y_values.shape
@@ -106,3 +147,25 @@ class VNI:
             marginal_density + 1e-8
         )  # Add epsilon to avoid division by zero
         return conditional_pdf, self.Y_values
+
+    @staticmethod
+    def plot_pdf(conditional_pdf, y_values, y_true=None, do: bool = False):
+        # Plot the result
+        plt.plot(
+            y_values.cpu().numpy(),
+            conditional_pdf.cpu().numpy(),
+            label="P(Y|X=x)" if not do else "P(Y|do(W=w),X=x)",
+        )
+        if y_true is not None:
+            plt.vlines(
+                y_true.cpu().numpy(),
+                min(conditional_pdf.cpu().numpy()),
+                max(conditional_pdf.cpu().numpy()),
+                colors="r",
+                linestyles="dashed",
+                label="Ground Truth",
+            )
+        plt.xlabel("Y")
+        plt.ylabel("P(Y|X=x)" if not do else "P(Y|do(W=w),X=x)")
+        plt.legend()
+        plt.show()

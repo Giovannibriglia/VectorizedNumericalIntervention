@@ -3,6 +3,8 @@ from typing import List
 import torch
 from matplotlib import pyplot as plt
 
+from vni.base import DISTRIBUTIONS_MAP
+from vni.base.intervention import InterventionalDistribution
 from vni.kde.gaussian_kernel import GaussianKDE
 
 
@@ -30,9 +32,17 @@ class VNI:
         self.n_samples_Y = n_samples_Y
 
         self.intervention_indices = intervention_indices or []
-        self.intervention_std = 0.1
 
         self.kde = GaussianKDE(bandwidth=0.5, device=self.device)
+
+        self.specific_intervention = InterventionalDistribution(
+            DISTRIBUTIONS_MAP["Normal"]
+        )
+        self.specific_intervention_std = 1e-4
+
+        self.global_intervention = InterventionalDistribution(
+            DISTRIBUTIONS_MAP["Uniform"]
+        )
 
         self.current_samples = X_prior.shape[0]
 
@@ -48,9 +58,7 @@ class VNI:
 
         self.Y_values = torch.linspace(
             self.Y_prior.min(), self.Y_prior.max(), self.n_samples_Y, device=self.device
-        ).view(
-            -1, 1
-        )  # self.kde.sample(self.Y_prior, self.n_samples_Y)
+        ).view(-1, 1)
 
     def update_data(self, X_prior: torch.Tensor, Y_prior: torch.Tensor):
         new_samples = X_prior.shape[0]
@@ -78,9 +86,7 @@ class VNI:
 
         self.Y_values = torch.linspace(
             self.Y_prior.min(), self.Y_prior.max(), self.n_samples_Y, device=self.device
-        ).view(
-            -1, 1
-        )  # self.kde.sample(self.Y_prior, self.n_samples_Y)
+        ).view(-1, 1)
 
     def set_intervention_indices(self, intervention_indices_X: List):
         assert isinstance(
@@ -95,23 +101,35 @@ class VNI:
         intervention_values: torch.Tensor = None,
         Y_seen: torch.Tensor = None,
     ):
-        y_values = Y_seen if Y_seen is not None else self.Y_values
-
+        y_values = Y_seen.view(-1, 1) if Y_seen is not None else self.Y_values
         x_value_expanded = X_obs.repeat(y_values.shape[0], 1)
 
-        # Apply Gaussian-distributed interventions to x_value_expanded
-        if intervention_values is not None and self.intervention_indices:
-            for idx, intervention_value in zip(
-                self.intervention_indices, intervention_values
-            ):
-                # Replace each intervention index in x_value_expanded with Gaussian samples
-                gaussian_samples = torch.normal(
-                    mean=intervention_value,
-                    std=self.intervention_std,
-                    size=(y_values.shape[0],),
-                    device=self.device,
+        if self.intervention_indices:
+            if intervention_values is None:  # global
+
+                low = torch.min(
+                    self.X_prior[:, self.intervention_indices], dim=0
+                ).values
+                high = torch.max(
+                    self.X_prior[:, self.intervention_indices], dim=0
+                ).values
+
+                self.global_intervention.set_dist_parameters(low=low, high=high)
+                samples = self.global_intervention.sample((y_values.shape[0],))
+
+            else:  # local
+                self.specific_intervention.set_dist_parameters(
+                    loc=intervention_values,
+                    scale=torch.full_like(
+                        intervention_values,
+                        self.specific_intervention_std,
+                        dtype=torch.float32,
+                    ),
                 )
-                x_value_expanded[:, idx] = gaussian_samples
+                samples = self.specific_intervention.sample((y_values.shape[0],))
+
+            samples = samples.to(x_value_expanded.dtype)
+            x_value_expanded[:, self.intervention_indices] = samples
 
         batch_size, x_dim = x_value_expanded.shape
         _, y_dim = y_values.shape

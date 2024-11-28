@@ -1,5 +1,7 @@
 # KDE - Kernel Density Estimation
 
+This module provides functionality for estimating probability densities using KDE with specified kernels. Below is an overview of the nomenclature and methods used for joint, marginal, and conditional probability density estimation.
+
 ## Nomenclature
 
 - \( N \): Number of samples

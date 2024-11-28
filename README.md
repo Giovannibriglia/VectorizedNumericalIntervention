@@ -6,21 +6,24 @@
 ### VNI
 - [x] Handle cpds computation
 - [x] Handle intervention
-- [ ] Handle high dimensional data in VNI
+- [x] Handle high dimensional data in VNI
+- [x] Handle intervention with an entire set of feature values -> hint: use uniform distribution
 - [ ] Develop tests
-- [ ] Handle Query in Batch
+- [ ] Handle Batch of Queries
 - [ ] Define new interventional distributions
 - [ ] Add visualization plots
 
 ### KDE
 - [ ] Develop tests
-- [ ] Handle Query in Batch
+- [ ] Handle Batch of Queries
 - [ ] New kernels
+- [ ] Handle Query with Multi-Target
+- [ ] Update Prior
 
 ### Usage
-- [ ] Prepare benchmark
 - [ ] Usage for benchmark
 - [ ] Usage for single prediction vs batch prediction
+- [ ] Usage for planning - representation
 
 ### Repo
 - [ ] Update architecture scheme

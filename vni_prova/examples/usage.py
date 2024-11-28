@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from vni.vni import VNI
+from vni.vni2 import VNI
 
 device = "cuda"
 
@@ -21,6 +21,7 @@ observed_X = torch.tensor(
     dtype=torch.float16,
     device="cpu",
 )
+
 observed_Y = torch.tensor(
     df[target_column].iloc[:n_samples].values, dtype=torch.float16, device="cpu"
 ).view(-1, 1)
@@ -58,6 +59,8 @@ for n, row in tqdm(df.iterrows(), total=len(df)):
 
     vni.plot_pdf(conditional_pdf, y_values, y_true, do=False)
 
+    # ----------------------------------------------------------------------
+
     # Compute conditional PDF P(Y | X = x_value) over y_values
     conditional_pdf, y_values = vni.compute_conditional_pdf(
         x_value, intervention_values=intervention_values
@@ -80,4 +83,4 @@ for i in tqdm(range(0, len(df), batch_size)):
     )
 
     # Compute conditional PDF P(Y | X = x_values_batch) for the entire batch
-    conditional_pdf_batch = vni.compute_conditional_pdf(x_values_batch)"""
+    conditional_pdf_batch = vni_prova.compute_conditional_pdf(x_values_batch)"""

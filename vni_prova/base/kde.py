@@ -13,10 +13,11 @@ class BaseKDE(ABC):
         """Evaluate KDE for the provided points."""
         if data is None:
             raise ValueError("KDE must be fitted with data before evaluation.")
+
         diff = points[:, None, :] - data[None, :, :]
         dist_sq = torch.sum(diff.mul(diff), dim=-1)
         kernel_vals = self._kernel_function(dist_sq)
-        return kernel_vals.mean(dim=1) / (
+        return kernel_vals.mean_prior(dim=1) / (
             self.bandwidth * (2 * torch.pi) ** (points.shape[1] / 2)
         )
 

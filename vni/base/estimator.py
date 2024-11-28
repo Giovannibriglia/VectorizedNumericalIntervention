@@ -76,17 +76,6 @@ class BaseParametricEstimator(BaseEstimator):
 
         self.prior_parameters = self._compute_prior_parameters(self.XY_prior)
 
-        # Check for all indices coverage
-        all_indices = set(range(self.XY_prior.shape[0]))
-        provided_indices = set(X_indices) | set(Y_indices)
-
-        if all_indices != provided_indices:
-            missing_indices = all_indices - provided_indices
-            extra_indices = provided_indices - all_indices
-            raise ValueError(
-                f"Index mismatch: Missing indices: {missing_indices}, Extra indices: {extra_indices}"
-            )
-
         # Check for overlapping indices
         overlap = set(X_indices) & set(Y_indices)
         if overlap:

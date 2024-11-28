@@ -14,20 +14,39 @@ class VNI:
         self,
         XY_prior_tensor: torch.Tensor,
         estimator_config: Dict,
-        Y_indices: List = None,
+        X_indices: List,
+        Y_indices: List,
         intervention_indices: List = None,
     ):
         self.estimator = create_estimator(estimator_config)
 
+        # Ensure Y_indices and intervention_indices are not None
+        Y_indices = Y_indices if Y_indices is not None else []
+        intervention_indices = (
+            intervention_indices if intervention_indices is not None else []
+        )
+
+        # Check that no indices in X_indices are in Y_indices or intervention_indices
+        assert not any(
+            idx in Y_indices for idx in X_indices
+        ), "X_indices cannot overlap with Y_indices."
+        assert not any(
+            idx in intervention_indices for idx in X_indices
+        ), "X_indices cannot overlap with intervention_indices."
+
+        # Check that no indices in Y_indices are in intervention_indices
+        assert not any(
+            idx in intervention_indices for idx in Y_indices
+        ), "Y_indices cannot overlap with intervention_indices."
+
+        # Validate intervention_indices are not in X_indices or Y_indices
+        assert not any(
+            idx in X_indices + Y_indices for idx in intervention_indices
+        ), "Intervention_indices cannot overlap with X_indices or Y_indices."
+
         self.intervention_indices = intervention_indices
 
-        # Create a mask to exclude Y_indices from all columns
-        all_indices = list(range(XY_prior_tensor.shape[0]))
-        X_indices = [i for i in all_indices if i not in Y_indices]
-
         self.estimator.fit(XY_prior_tensor, X_indices, Y_indices)
-
-        del XY_prior_tensor
 
     def query(
         self,
@@ -100,6 +119,7 @@ class VNI:
 if __name__ == "__main__":
 
     target_features = ["agent_0_reward"]
+    intervention_features = []
 
     df = pd.read_pickle("../data/df_navigation_pomdp_discrete_actions_0.pkl")
     agent0_columns = [col for col in df.columns if "agent_0" in col]
@@ -114,9 +134,13 @@ if __name__ == "__main__":
         df.columns.get_loc(col)
         for col in df.columns.to_list()
         if col not in target_features
+        if col not in intervention_features
     ]
-
-    intervention_indices = Y_indices.copy()
+    intervention_indices = [
+        df.columns.get_loc(col)
+        for col in df.columns.to_list()
+        if col in intervention_features
+    ]
 
     obs_features = [s for s in agent0_columns if s not in target_features]
     X = df.loc[:, agent0_columns]
@@ -126,15 +150,19 @@ if __name__ == "__main__":
 
     estimator_config = {}
 
-    vni = VNI(XY_prior_tensor.T, estimator_config, Y_indices, intervention_indices)
+    vni = VNI(
+        XY_prior_tensor.T, estimator_config, X_indices, Y_indices, intervention_indices
+    )
 
     batch_size = 9196
     for t in tqdm(range(batch_size, XY_prior_tensor.shape[0], batch_size)):
-        # single prediction
+
         X_query = XY_prior_tensor[t - batch_size : t, X_indices]
         Y_query = XY_prior_tensor[t - batch_size : t, Y_indices]
+        X_do = XY_prior_tensor[t - batch_size : t, intervention_indices]
+
         pdf, y_values = vni.query(
-            X_query, Y_query, n_samples=9196
+            X_query, Y_query, X_do, n_samples=9196
         )  # [batch_size, n_target_features, n_samples]
 
         vni.plot_result(pdf, y_values)

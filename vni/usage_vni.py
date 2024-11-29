@@ -14,39 +14,34 @@ class VNI:
         self,
         XY_prior_tensor: torch.Tensor,
         estimator_config: Dict,
-        X_indices: List,
-        Y_indices: List,
-        intervention_indices: List = None,
+        X_indices: List[int],
+        Y_indices: List[int],
+        intervention_indices: List[int] = None,
     ):
-        self.estimator = create_estimator(estimator_config)
-
         # Ensure Y_indices and intervention_indices are not None
         Y_indices = Y_indices if Y_indices is not None else []
         intervention_indices = (
             intervention_indices if intervention_indices is not None else []
         )
 
-        # Check that no indices in X_indices are in Y_indices or intervention_indices
-        assert not any(
-            idx in Y_indices for idx in X_indices
-        ), "X_indices cannot overlap with Y_indices."
-        assert not any(
-            idx in intervention_indices for idx in X_indices
-        ), "X_indices cannot overlap with intervention_indices."
+        # 1) Check that intervention_indices are in X_indices
+        if not set(intervention_indices).issubset(X_indices):
+            raise ValueError("All intervention_indices must be a subset of X_indices.")
 
-        # Check that no indices in Y_indices are in intervention_indices
-        assert not any(
-            idx in intervention_indices for idx in Y_indices
-        ), "Y_indices cannot overlap with intervention_indices."
+        # 2) Check that X_indices and Y_indices are not overlapping
+        if set(X_indices) & set(Y_indices):
+            raise ValueError("X_indices and Y_indices must not overlap.")
 
-        # Validate intervention_indices are not in X_indices or Y_indices
-        assert not any(
-            idx in X_indices + Y_indices for idx in intervention_indices
-        ), "Intervention_indices cannot overlap with X_indices or Y_indices."
+        # 3) Check that no intervention_indices are in Y_indices
+        if set(intervention_indices) & set(Y_indices):
+            raise ValueError("intervention_indices must not overlap with Y_indices.")
 
+        # Set attributes and initialize the estimator
         self.intervention_indices = intervention_indices
-
-        self.estimator.fit(XY_prior_tensor, X_indices, Y_indices)
+        self.estimator = create_estimator(
+            estimator_config, X_indices, Y_indices, intervention_indices
+        )
+        self.estimator.fit(XY_prior_tensor)
 
     def query(
         self,
@@ -88,10 +83,13 @@ class VNI:
         return X_query, Y_query, X_do
 
     @staticmethod
-    def plot_result(pdf: torch.Tensor, y_values: torch.Tensor):
+    def plot_result(
+        pdf: torch.Tensor, y_values: torch.Tensor, true_values: torch.Tensor
+    ):
         """
         :param pdf: probability density function over Y-values. Shape [batch_size, n_target_features, n_samples]
         :param y_values: evaluated Y-values. Shape [batch_size, n_target_features, n_samples]
+        :param true_values: true Y-values. Shape [batch_size, n_target_features]
         :return: None
         """
         pdf = pdf.cpu().numpy()
@@ -104,7 +102,10 @@ class VNI:
 
             plt.plot(y_values1, pdf1, label="prediction")
             plt.scatter(
-                Y_query[0].cpu().numpy(), np.max(pdf1), c="red", label="ground truth"
+                true_values[0].cpu().numpy(),
+                np.max(pdf1),
+                c="red",
+                label="ground truth",
             )
         else:
             plt.scatter(y_values, pdf, label="log probability")
@@ -119,7 +120,7 @@ class VNI:
 if __name__ == "__main__":
 
     target_features = ["agent_0_reward"]
-    intervention_features = []
+    intervention_features = ["agent_0_action_0"]
 
     df = pd.read_pickle("../data/df_navigation_pomdp_discrete_actions_0.pkl")
     agent0_columns = [col for col in df.columns if "agent_0" in col]
@@ -134,7 +135,6 @@ if __name__ == "__main__":
         df.columns.get_loc(col)
         for col in df.columns.to_list()
         if col not in target_features
-        if col not in intervention_features
     ]
     intervention_indices = [
         df.columns.get_loc(col)
@@ -154,15 +154,21 @@ if __name__ == "__main__":
         XY_prior_tensor.T, estimator_config, X_indices, Y_indices, intervention_indices
     )
 
-    batch_size = 9196
+    batch_size = 64
+    n_samples = 1024
     for t in tqdm(range(batch_size, XY_prior_tensor.shape[0], batch_size)):
 
+        true_values = XY_prior_tensor[t - batch_size : t, Y_indices]
+
         X_query = XY_prior_tensor[t - batch_size : t, X_indices]
-        Y_query = XY_prior_tensor[t - batch_size : t, Y_indices]
+        Y_query = None  # true_values.clone()
         X_do = XY_prior_tensor[t - batch_size : t, intervention_indices]
 
         pdf, y_values = vni.query(
-            X_query, Y_query, X_do, n_samples=9196
+            X_query,
+            Y_query=Y_query,
+            X_do=X_do,
+            n_samples=n_samples,
         )  # [batch_size, n_target_features, n_samples]
 
-        vni.plot_result(pdf, y_values)
+        vni.plot_result(pdf, y_values, true_values)

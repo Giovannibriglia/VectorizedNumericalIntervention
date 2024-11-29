@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import List, Tuple
 
 import torch
 from torch.distributions import MultivariateNormal
@@ -7,8 +7,15 @@ from vni.base.estimator import BaseParametricEstimator
 
 
 class MeanCovarianceEstimator(BaseParametricEstimator):
-    def __init__(self):
-        super(MeanCovarianceEstimator, self).__init__()
+    def __init__(
+        self,
+        X_indices: List[int],
+        Y_indices: List[int],
+        intervention_indices: List[int] = None,
+    ):
+        super(MeanCovarianceEstimator, self).__init__(
+            X_indices, Y_indices, intervention_indices
+        )
 
     def predict(
         self,
@@ -19,11 +26,7 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         batch_size = X_query.shape[0]
 
-        # Extract prior parameters
-        (
-            mu,
-            sigma,
-        ) = self.prior_parameters  # mu: [n_features], sigma: [n_features, n_features]
+        mu, sigma = self.prior_parameters
 
         # Validate dimensions
         assert mu.dim() == 1, f"Expected mu to have 1 dimension, got {mu.shape}"
@@ -34,6 +37,40 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
             mu.shape[0] == sigma.shape[0] == sigma.shape[1]
         ), f"Mismatch in dimensions: mu.shape = {mu.shape}, sigma.shape = {sigma.shape}"
 
+        (
+            mu_target_given_obs,
+            Sigma_target_given_obs,
+        ) = self._compute_conditional_parameters(mu, sigma, X_query, batch_size)
+
+        # Use MultivariateNormal for PDF evaluation
+        mvn = MultivariateNormal(
+            loc=mu_target_given_obs, covariance_matrix=Sigma_target_given_obs
+        )
+
+        pdf, values = self._evaluate_Y(Y_query, mvn, n_samples, batch_size)
+
+        return pdf, values
+
+    def _compute_prior_parameters(self, XY: torch.Tensor):
+        """
+        Compute the mean and covariance of the target (Y) given observed variables (X).
+
+        Args:
+            XY (torch.Tensor): Observed and Target variables of shape [n_features_X + n_features_Y, n_samples].
+        """
+
+        # Compute the mean vector along the sample dimension
+        mean = XY.mean(dim=1)  # [n_features_X + n_features_Y]
+
+        # Compute the covariance matrix
+        centered_data = XY - mean.unsqueeze(
+            1
+        )  # Center the data along the sample dimension
+        covariance = (centered_data @ centered_data.T) / (XY.shape[1] - 1)  # Covariance
+
+        return mean, covariance
+
+    def _compute_conditional_parameters(self, mu, sigma, X_query, batch_size):
         # Expand mu and sigma for broadcasting
         mu_expanded = mu.unsqueeze(0)  # Shape: [1, n_features]
         sigma_expanded = sigma.unsqueeze(0)  # Shape: [1, n_features, n_features]
@@ -92,42 +129,16 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
         # Expand covariance to match the batch size
         Sigma_target_given_obs = Sigma_target_given_obs.expand(batch_size, -1, -1)
 
-        # Use MultivariateNormal for PDF evaluation
-        mvn = MultivariateNormal(
-            loc=mu_target_given_obs, covariance_matrix=Sigma_target_given_obs
-        )
+        return mu_target_given_obs, Sigma_target_given_obs
 
-        if Y_query is None:
-            # Calculate min and max for each feature in Y
-            Y_min = torch.min(
-                self.XY_prior[self.Y_indices, :], dim=1
-            ).values  # Shape: [n_target_features]
-            Y_max = torch.max(
-                self.XY_prior[self.Y_indices, :], dim=1
-            ).values  # Shape: [n_target_features]
+    def _evaluate_Y(self, Y_query, dist, n_samples, batch_size):
 
-            # Create a linspace template
-            linspace_template = torch.linspace(
-                0, 1, n_samples, device=X_query.device
-            ).unsqueeze(
-                0
-            )  # [1, n_samples]
+        Y_values = self._define_Y_values(Y_query, n_samples, batch_size)
 
-            # Scale the linspace to each feature's range
-            Y_values = Y_min.unsqueeze(1) + linspace_template * (
-                Y_max - Y_min
-            ).unsqueeze(
-                1
-            )  # [n_target_features, n_samples]
-
-            # Expand Y_values to match batch size
-            Y_values = Y_values.unsqueeze(0).expand(
-                batch_size, -1, -1
-            )  # [batch_size, n_target_features, n_samples]
-
+        if Y_values.dim() == 3:
             # Preallocate log_pdf_Y
             log_pdf_Y = torch.zeros_like(
-                Y_values, device=X_query.device
+                Y_values, device=self.XY_prior.device
             )  # [batch_size, n_target_features, n_samples]
 
             for i in range(n_samples):
@@ -135,16 +146,18 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
                 Y_sample = Y_values[:, :, i]  # Shape: [batch_size, n_target_features]
 
                 # Ensure proper shape for log_prob
-                log_pdf_Y[:, :, i] = mvn.log_prob(Y_sample)[
+                log_pdf_Y[:, :, i] = dist.log_prob(Y_sample)[
                     :, None
                 ]  # Shape: [batch_size, 1]
+        elif Y_values.dim() == 2:
+            # Use provided Y_query values
+            Y_values = Y_query.clone()  # [batch_size, n_target_features]
+            log_pdf_Y = (
+                dist.log_prob(Y_values).unsqueeze(-1).unsqueeze(-1)
+            )  # [batch_size, n_target_features, 1]
 
         else:
-            # Use provided Y_query values
-            Y_values = Y_query  # [batch_size, n_target_features]
-            log_pdf_Y = (
-                mvn.log_prob(Y_values).unsqueeze(-1).unsqueeze(-1)
-            )  # [batch_size, n_target_features, 1]
+            raise ValueError("Y_values is not well defined")
 
         # Convert log PDF to actual PDF
         pdf_Y = torch.exp(
@@ -152,22 +165,3 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
         )  # [batch_size, n_target_features, n_samples] if no Y_query; else [batch_size, n_target_features, 1]
 
         return pdf_Y, Y_values
-
-    def _compute_prior_parameters(self, XY: torch.Tensor):
-        """
-        Compute the mean and covariance of the target (Y) given observed variables (X).
-
-        Args:
-            XY (torch.Tensor): Observed and Target variables of shape [n_features_X + n_features_Y, n_samples].
-        """
-
-        # Compute the mean vector along the sample dimension
-        mean = XY.mean(dim=1)  # [n_features_X + n_features_Y]
-
-        # Compute the covariance matrix
-        centered_data = XY - mean.unsqueeze(
-            1
-        )  # Center the data along the sample dimension
-        covariance = (centered_data @ centered_data.T) / (XY.shape[1] - 1)  # Covariance
-
-        return mean, covariance

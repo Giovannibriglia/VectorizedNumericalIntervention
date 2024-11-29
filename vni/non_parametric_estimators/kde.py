@@ -41,77 +41,102 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
 
         # Extract prior samples for the observed features (X).
         X_prior = self.XY_prior[self.X_indices, :].T  # [n_samples_data, n_features_X]
+        Y_prior = self.XY_prior[self.Y_indices, :].T  # [n_samples_data, n_features_Y]
+
+        x_kernel = self._compute_density(
+            X_prior, X_query
+        )  # [batch_size, n_samples_data]
+
+        marginal_density = x_kernel.sum(dim=-1) / X_prior.size(0)  # [batch_size]
 
         # Define or sample Y values based on the query.
         Y_values = self._define_Y_values(
             Y_query, n_samples, batch_size
         )  # Output: [batch_size, n_target_features, n_samples] if Y_query is None, else [batch_size, n_target_features, 1]
 
-        Y_values = Y_values.squeeze(-1)  # [batch_size, n_target_features]
+        pdf = torch.zeros_like(Y_values, device=Y_values.device)
 
-        joint_points = torch.zeros(
-            (batch_size, X_query.shape[1] + Y_query.shape[1]),
-            device=X_query.device,
-        )
+        for feature_idx in range(Y_values.shape[1]):
+            for value in range(Y_values.shape[2]):
+                y_query_feature = Y_values[:, feature_idx, value].unsqueeze(
+                    -1
+                )  # [batch_size, 1]
+                y_samples_feature = Y_prior[:, feature_idx].unsqueeze(
+                    -1
+                )  # [n_samples_data, 1]
 
-        joint_points[:, self.X_indices] = X_query
-        joint_points[:, self.Y_indices] = Y_query
+                y_kernel = self._compute_density(
+                    y_samples_feature, y_query_feature
+                )  # [batch_size, n_samples_data]
 
-        marginal_points = X_query.clone()
+                # Compute joint KDE
+                joint_density = (x_kernel * y_kernel).sum(dim=-1) / Y_values[
+                    :, feature_idx, :
+                ].size(
+                    0
+                )  # [batch_size]
 
-        # Compute conditional PDF
-        pdf = self._evaluate_Y(self.XY_prior.T, joint_points, X_prior, marginal_points)
+                # Compute conditional P(X | Y = y)
+                cpd_feature = joint_density / (
+                    marginal_density + 1e-8
+                )  # Avoid division by zero [batch_size]
 
-        return pdf, Y_values
+                pdf[:, feature_idx, value] = cpd_feature
+
+        self._check_output(pdf, Y_values, Y_query, batch_size, n_samples)
+
+        return (
+            pdf,
+            Y_values,
+        )  # [batch_size, n_target_features, n_samples_Y_values], [batch_size, n_target_features, n_samples_Y_values]
 
     def _compute_density(self, data: torch.Tensor, points: torch.Tensor):
         """Evaluate KDE for the provided points."""
         if data is None:
             raise ValueError("KDE must be fitted with data before evaluation.")
 
-        diff = points[:, None, :] - data[None, :, :]
-        dist_sq = torch.sum(diff.mul(diff), dim=-1)
-        kernel_vals = self._kernel_function(dist_sq)
-        return kernel_vals.mean(dim=1) / (
-            self.bandwidth * (2 * torch.pi) ** (points.shape[1] / 2)
-        )
+        # Compute difference
+        diff = self._compute_diff(points, data)
+
+        # Compute the kernel values
+        kernel_values = self._kernel_function(diff)
+
+        return kernel_values
+
+    @staticmethod
+    def _compute_diff(x, y):
+        """
+        Compute the difference between two tensors in a universal way.
+
+        Args:
+            x: torch.Tensor of shape [n_queries, d], query points.
+            y: torch.Tensor of shape [n_samples, d], data points.
+
+        Returns:
+            diff: torch.Tensor of shape [n_queries, n_samples, d], differences.
+        """
+
+        return x[:, None, :] - y[None, :, :]  # Shape: [n_queries, n_samples, d]
+
+    def _apply_kernel(self, x, y):
+        """
+        General function to apply a kernel function between two tensors.
+
+        Args:
+            x: torch.Tensor of shape [n_queries, d], query points.
+            y: torch.Tensor of shape [n_samples, d], data points.
+            kernel_function: Callable, kernel function to compute values.
+            **kwargs: Additional arguments to pass to the kernel function.
+
+        Returns:
+            kernel_values: torch.Tensor of shape [n_queries, n_samples], kernel values.
+        """
+        diff = self._compute_diff(x, y)
+        return self._kernel_function(diff)
 
     @abstractmethod
     def _kernel_function(self, dist_sq):
         raise NotImplementedError
-
-    def _evaluate_Y(self, XY, joint_points, X, marginal_points):
-        """
-        Evaluate the conditional density P(Y | X = x) using KDE.
-
-        Args:
-            XY (torch.Tensor): Prior samples for joint density evaluation.
-            joint_points (torch.Tensor): Query points for joint density P(X, Y).
-            X (torch.Tensor): Prior samples for marginal density evaluation.
-            marginal_points (torch.Tensor): Query points for marginal density P(X).
-
-        Returns:
-            torch.Tensor: Conditional PDF with shape [batch_size, n_samples_Y].
-        """
-        # Evaluate the joint density P(X, Y)
-        joint_density = self._compute_density(
-            XY, joint_points
-        )  # Shape: [batch_size, n_target_features, n_samples_Y]
-
-        # Evaluate the marginal density P(X = x)
-        marginal_density = torch.mean(
-            self._compute_density(X, marginal_points)
-        )  # Shape: [batch_size]
-
-        # Add a small epsilon for numerical stability
-        epsilon = 1e-8
-        # Compute the conditional density P(Y | X = x) = P(X, Y) / P(X)
-        conditional_pdf = joint_density / (
-            marginal_density + epsilon
-        )  # Shape: [batch_size, n_samples_Y]
-        conditional_pdf = conditional_pdf.unsqueeze(-1)
-
-        return conditional_pdf
 
 
 class GaussianKDE(KernelDensityEstimator):
@@ -124,6 +149,49 @@ class GaussianKDE(KernelDensityEstimator):
         super(GaussianKDE, self).__init__(X_indices, Y_indices, intervention_indices)
         self.bandwidth = 0.5
 
-    def _kernel_function(self, dist_sq):
-        """Default Gaussian kernel function."""
-        return torch.exp(-0.5 * dist_sq / self.bandwidth**2)
+    def _kernel_function(self, diff):
+        """ "
+        Multivariate Gaussian kernel function.
+
+        Args:
+            diff: torch.Tensor of shape [n_queries, n_samples, d], differences.
+
+        Returns:
+            kernel: torch.Tensor of shape [n_queries, n_samples], unnormalized kernel values.
+        """
+        # Ensure bandwidth has the correct shape
+        if isinstance(self.bandwidth, float):
+            bandwidth = torch.full((diff.size(-1),), self.bandwidth, device=diff.device)
+        else:
+            bandwidth = self.bandwidth
+
+        # Normalize by bandwidth
+        norm_diff = diff / bandwidth  # Shape: [n_queries, n_samples, d]
+        kernel = torch.exp(-0.5 * norm_diff.pow(2)).prod(
+            dim=-1
+        )  # Gaussian kernel and product across dimensions
+
+        d = diff.shape[2]
+        norm_const = self._compute_normalization_constant(d, diff.device)
+
+        return kernel / norm_const
+
+    def _compute_normalization_constant(self, d, device):
+        """
+        Compute the normalization constant for the multivariate Gaussian kernel.
+
+        Args:
+            d: int, dimensionality of the data.
+            device: torch.device, device for computation.
+
+        Returns:
+            norm_const: float, normalization constant.
+        """
+        if isinstance(self.bandwidth, float):
+            bandwidth = torch.full((d,), self.bandwidth, device=device)
+        else:
+            bandwidth = self.bandwidth
+        return (
+            torch.sqrt(torch.tensor((2 * torch.pi) ** d, device=device))
+            * bandwidth.prod()
+        )

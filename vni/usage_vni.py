@@ -94,21 +94,26 @@ class VNI:
         """
         pdf = pdf.cpu().numpy()
         y_values = y_values.cpu().numpy()
+        true_values = true_values.cpu().numpy()
+
+        batch_index = 0
+        target_feature_index = 0
 
         plt.figure(figsize=(8, 5))
         if pdf.shape[2] > 1:
-            pdf1 = pdf[0][0]
-            y_values1 = y_values[0][0]
+            pdf1 = pdf[batch_index][target_feature_index]
+            y_values1 = y_values[batch_index][target_feature_index]
+            true_values1 = true_values[batch_index][target_feature_index]
 
-            plt.plot(y_values1, pdf1, label="prediction")
+            plt.plot(y_values1, pdf1, label="predicted density function")
             plt.scatter(
-                true_values[0].cpu().numpy(),
+                true_values1,
                 np.max(pdf1),
                 c="red",
                 label="ground truth",
             )
         else:
-            plt.scatter(y_values, pdf, label="log probability")
+            plt.scatter(y_values, pdf, label="predicted density value")
 
         plt.xlabel("target feature values")
         plt.ylabel("PDF")
@@ -119,8 +124,8 @@ class VNI:
 
 if __name__ == "__main__":
 
-    target_features = ["agent_0_reward"]
-    intervention_features = ["agent_0_action_0"]
+    target_features = ["agent_0_action_0"]
+    intervention_features = []  # ["agent_0_reward"]
 
     df = pd.read_pickle("../data/df_navigation_pomdp_discrete_actions_0.pkl")
     agent0_columns = [col for col in df.columns if "agent_0" in col]

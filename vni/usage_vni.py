@@ -125,7 +125,7 @@ class VNI:
 if __name__ == "__main__":
 
     target_features = ["agent_0_action_0"]
-    intervention_features = []  # ["agent_0_reward"]
+    intervention_features = ["agent_0_reward"]
 
     df = pd.read_pickle("../data/df_navigation_pomdp_discrete_actions_0.pkl")
     agent0_columns = [col for col in df.columns if "agent_0" in col]
@@ -159,7 +159,7 @@ if __name__ == "__main__":
         XY_prior_tensor.T, estimator_config, X_indices, Y_indices, intervention_indices
     )
 
-    batch_size = 64
+    batch_size = 1
     n_samples = 1024
     for t in tqdm(range(batch_size, XY_prior_tensor.shape[0], batch_size)):
 

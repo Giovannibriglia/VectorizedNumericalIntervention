@@ -43,7 +43,7 @@ class BaseEstimator(object):
         Fits the model to the given data and checks index coverage and overlap.
 
         Args:
-            XY (torch.Tensor): The dataset to fit, with shape (n_features, n_samples).
+            XY (torch.Tensor): The dataset to fit, with shape (n_features, n_samples_data).
 
         Raises:
             ValueError: If not all indices are covered or if there are overlapping indices.
@@ -69,7 +69,7 @@ class BaseEstimator(object):
             uniform_dist = Uniform(low, high)
 
             # Generate uniform random values within the calculated range
-            # The shape should match [len(intervention_indices), new_XY.shape[1]]
+            # The shape should match [len(intervention_indices), n_samples_data]
             new_samples = uniform_dist.sample(
                 (new_XY.shape[1],)
             ).T  # Transpose to align dimensions

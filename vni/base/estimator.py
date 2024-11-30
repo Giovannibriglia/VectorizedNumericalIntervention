@@ -13,6 +13,7 @@ class BaseEstimator(object):
         intervention_indices: List[int] = None,
     ):
         self.XY_prior = None
+        self.XY_prior_intervention = None
 
         assert not (
             set(X_indices) & set(Y_indices)
@@ -20,7 +21,9 @@ class BaseEstimator(object):
         self.X_indices = X_indices
         self.Y_indices = Y_indices
 
-        self.intervention_indices = intervention_indices
+        self.intervention_indices = (
+            None if len(intervention_indices) == 0 else intervention_indices
+        )
 
         self.local_intervention = None
         self.global_intervention = None
@@ -32,22 +35,66 @@ class BaseEstimator(object):
     ):
         raise NotImplementedError
 
+    def _fit(
+        self,
+        XY: torch.Tensor,
+    ):
+        """
+        Fits the model to the given data and checks index coverage and overlap.
+
+        Args:
+            XY (torch.Tensor): The dataset to fit, with shape (n_features, n_samples).
+
+        Raises:
+            ValueError: If not all indices are covered or if there are overlapping indices.
+        """
+        self.XY_prior = XY
+
+        if self.intervention_indices is not None:
+            # Clone the original tensor
+            new_XY = XY.clone()
+
+            # Get the slice of the tensor corresponding to the intervention indices
+            intervention_values = XY[self.intervention_indices, :]
+
+            # Calculate the low and high for the uniform distribution
+            low = intervention_values.min(
+                dim=1, keepdim=True
+            ).values  # Shape: [len(intervention_indices), 1]
+            high = intervention_values.max(
+                dim=1, keepdim=True
+            ).values  # Shape: [len(intervention_indices), 1]
+
+            # Create a uniform distribution with the calculated bounds
+            uniform_dist = Uniform(low, high)
+
+            # Generate uniform random values within the calculated range
+            # The shape should match [len(intervention_indices), new_XY.shape[1]]
+            new_samples = uniform_dist.sample(
+                (new_XY.shape[1],)
+            ).T  # Transpose to align dimensions
+
+            # Update the specified rows of the tensor with the generated samples
+            new_XY[self.intervention_indices, :] = new_samples
+
+            self.XY_prior_intervention = new_XY
+
     @abstractmethod
     def predict(
         self,
         X_query: torch.Tensor,
         Y_query: torch.Tensor = None,
         X_do: torch.Tensor = None,
-        n_samples: int = 1000,
+        n_samples: int = 1024,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the CPD of Y given X in batch mode using MultivariateNormal for PDF computation.
 
         Args:
-            X_query (torch.Tensor): Batch of X values, shape [batch_size, n_features_X].
+            X_query (torch.Tensor): Batch of X values, shape [batch_size, n_features_X-n_features_X_do].
             Y_query (torch.Tensor, optional): Batch of Y query values, shape [batch_size, n_features_Y].
                                                If provided, the CPD will be evaluated for these values.
-            X_do (torch.Tensor, optional): Interventional values for X. Defaults to None.
+            X_do (torch.Tensor, optional): Interventional values for X. Defaults to None. [batch_size, n_features_X_do]
             n_samples (int): Number of samples to generate if Y_query is None.
 
         Returns:
@@ -124,49 +171,16 @@ class BaseParametricEstimator(BaseEstimator):
     ):
         super().__init__(X_indices, Y_indices, intervention_indices)
         self.prior_parameters = None
+        self.prior_parameters_after_interventions = None
 
     def fit(self, XY: torch.Tensor):
-        """
-        Fits the model to the given data and checks index coverage and overlap.
-
-        Args:
-            XY (torch.Tensor): The dataset to fit, with shape (n_features, n_samples).
-
-        Raises:
-            ValueError: If not all indices are covered or if there are overlapping indices.
-        """
-        if self.intervention_indices is None:
-            self.XY_prior = XY
-        else:
-            # Clone the original tensor
-            new_XY = XY.clone()
-
-            # Get the slice of the tensor corresponding to the intervention indices
-            intervention_values = XY[self.intervention_indices, :]
-
-            # Calculate the low and high for the uniform distribution
-            low = intervention_values.min(
-                dim=1, keepdim=True
-            ).values  # Shape: [len(intervention_indices), 1]
-            high = intervention_values.max(
-                dim=1, keepdim=True
-            ).values  # Shape: [len(intervention_indices), 1]
-
-            # Create a uniform distribution with the calculated bounds
-            uniform_dist = Uniform(low, high)
-
-            # Generate uniform random values within the calculated range
-            # The shape should match [len(intervention_indices), new_XY.shape[1]]
-            new_samples = uniform_dist.sample(
-                (new_XY.shape[1],)
-            ).T  # Transpose to align dimensions
-
-            # Update the specified rows of the tensor with the generated samples
-            new_XY[self.intervention_indices, :] = new_samples
-
-            self.XY_prior = new_XY
-
+        self._fit(XY)
         self.prior_parameters = self._compute_prior_parameters(self.XY_prior)
+
+        if self.intervention_indices is not None:
+            self.prior_parameters_after_interventions = self._compute_prior_parameters(
+                self.XY_prior_intervention
+            )
 
     @abstractmethod
     def predict(
@@ -174,7 +188,7 @@ class BaseParametricEstimator(BaseEstimator):
         X_query: torch.Tensor,
         Y_query: torch.Tensor = None,
         X_do: torch.Tensor = None,
-        n_samples: int = 1000,
+        n_samples: int = 1024,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         raise NotImplementedError
 
@@ -193,45 +207,7 @@ class BaseNonParametricEstimator(BaseEstimator):
         super().__init__(X_indices, Y_indices, intervention_indices)
 
     def fit(self, XY: torch.Tensor):
-        """
-        Fits the model to the given data and checks index coverage and overlap.
-
-        Args:
-            XY (torch.Tensor): The dataset to fit, with shape (n_features, n_samples).
-
-        Raises:
-            ValueError: If not all indices are covered or if there are overlapping indices.
-        """
-        if self.intervention_indices is None:
-            self.XY_prior = XY
-        else:
-            # Clone the original tensor
-            new_XY = XY.clone()
-
-            # Get the slice of the tensor corresponding to the intervention indices
-            intervention_values = XY[self.intervention_indices, :]
-
-            # Calculate the low and high for the uniform distribution
-            low = intervention_values.min(
-                dim=1, keepdim=True
-            ).values  # Shape: [len(intervention_indices), 1]
-            high = intervention_values.max(
-                dim=1, keepdim=True
-            ).values  # Shape: [len(intervention_indices), 1]
-
-            # Create a uniform distribution with the calculated bounds
-            uniform_dist = Uniform(low, high)
-
-            # Generate uniform random values within the calculated range
-            # The shape should match [len(intervention_indices), new_XY.shape[1]]
-            new_samples = uniform_dist.sample(
-                (new_XY.shape[1],)
-            ).T  # Transpose to align dimensions
-
-            # Update the specified rows of the tensor with the generated samples
-            new_XY[self.intervention_indices, :] = new_samples
-
-            self.XY_prior = new_XY
+        self._fit(XY)
 
     @abstractmethod
     def predict(

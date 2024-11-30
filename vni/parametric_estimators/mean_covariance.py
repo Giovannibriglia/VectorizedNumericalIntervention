@@ -22,11 +22,19 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
         X_query: torch.Tensor,
         Y_query: torch.Tensor = None,
         X_do: torch.Tensor = None,
-        n_samples: int = 1000,
+        n_samples: int = 1024,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         batch_size = X_query.shape[0]
 
-        mu, sigma = self.prior_parameters
+        if X_do is None:
+            mu, sigma = (
+                self.prior_parameters
+                if self.intervention_indices is None
+                else self.prior_parameters_after_interventions
+            )
+        else:
+            pass
+            " self._compute_prior_parameters(new_XY) "
 
         # Validate dimensions
         assert mu.dim() == 1, f"Expected mu to have 1 dimension, got {mu.shape}"

@@ -9,15 +9,15 @@
 - [x] Handle high dimensional data in VNI
 - [x] Handle intervention with an entire set of feature values -> hint: use uniform distribution
 - [ ] Develop tests
-- [ ] Handle Batch of Queries
+- [X] Handle Batch of Queries
 - [ ] Define new interventional distributions
 - [ ] Add visualization plots
 
 ### KDE
 - [ ] Develop tests
-- [ ] Handle Batch of Queries
+- [X] Handle Batch of Queries
 - [ ] New kernels
-- [ ] Handle Query with Multi-Target
+- [X] Handle Query with Multi-Target
 - [ ] Update Prior
 
 ### Usage

@@ -24,9 +24,9 @@ class VNI:
             intervention_indices if intervention_indices is not None else []
         )
 
-        # 1) Check that intervention_indices are in X_indices
+        """# 1) Check that intervention_indices are in X_indices
         if not set(intervention_indices).issubset(X_indices):
-            raise ValueError("All intervention_indices must be a subset of X_indices.")
+            raise ValueError("All intervention_indices must be a subset of X_indices.")"""
 
         # 2) Check that X_indices and Y_indices are not overlapping
         if set(X_indices) & set(Y_indices):
@@ -105,7 +105,7 @@ class VNI:
             y_values1 = y_values[batch_index][target_feature_index]
             true_values1 = true_values[batch_index][target_feature_index]
 
-            plt.plot(y_values1, pdf1, label="predicted density function")
+            plt.plot(y_values1, pdf1, label="predicted pdf")
             plt.scatter(
                 true_values1,
                 np.max(pdf1),
@@ -124,8 +124,8 @@ class VNI:
 
 if __name__ == "__main__":
 
-    target_features = ["agent_0_action_0"]
-    intervention_features = ["agent_0_reward"]
+    target_features = ["agent_0_reward"]
+    intervention_features = ["agent_0_action_0"]
 
     df = pd.read_pickle("../data/df_navigation_pomdp_discrete_actions_0.pkl")
     agent0_columns = [col for col in df.columns if "agent_0" in col]
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     X_indices = [
         df.columns.get_loc(col)
         for col in df.columns.to_list()
-        if col not in target_features
+        if col not in target_features and col not in intervention_features
     ]
     intervention_indices = [
         df.columns.get_loc(col)
@@ -160,7 +160,7 @@ if __name__ == "__main__":
     )
 
     batch_size = 1
-    n_samples = 1024
+    n_samples = 128
     for t in tqdm(range(batch_size, XY_prior_tensor.shape[0], batch_size)):
 
         true_values = XY_prior_tensor[t - batch_size : t, Y_indices]

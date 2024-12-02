@@ -1,7 +1,8 @@
 from typing import List, Tuple
 
 import torch
-from torch.distributions import MultivariateNormal
+
+from torch.distributions import MultivariateNormal, Uniform
 
 from vni.base.estimator import BaseParametricEstimator
 
@@ -26,29 +27,65 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         batch_size = X_query.shape[0]
 
-        if X_do is None:
-            mu, sigma = (
-                self.prior_parameters
-                if self.intervention_indices is None
-                else self.prior_parameters_after_interventions
-            )
+        if self.intervention_indices is None:
+            if X_do is None:
+                mu, sigma = self.prior_parameters
+            else:
+                raise ValueError(
+                    "intervention indices are not initialized, make sure they are"
+                )
         else:
-            pass
-            " self._compute_prior_parameters(new_XY) "
+            if X_do is None:
+                mu, sigma = self.prior_parameters_after_interventions
+            else:
+                new_XY = self.XY_prior.clone()
+                if batch_size == 1:
+                    new_XY[:, self.intervention_indices] = X_do
 
-        # Validate dimensions
-        assert mu.dim() == 1, f"Expected mu to have 1 dimension, got {mu.shape}"
-        assert (
-            sigma.dim() == 2
-        ), f"Expected sigma to have 2 dimensions, got {sigma.shape}"
-        assert (
-            mu.shape[0] == sigma.shape[0] == sigma.shape[1]
-        ), f"Mismatch in dimensions: mu.shape = {mu.shape}, sigma.shape = {sigma.shape}"
+                    mu, sigma = self._compute_prior_parameters(new_XY)
+
+                else:
+                    mu = torch.zeros(
+                        (batch_size, self.XY_prior.shape[0]), device=X_query.device
+                    )  # Shape: [batch_size, n_features]
+                    sigma = torch.zeros(
+                        (batch_size, self.XY_prior.shape[0], self.XY_prior.shape[0]),
+                        device=X_query.device,
+                    )  # Shape: [batch_size, n_features, n_features]
+
+                    y_min = torch.min(
+                        self.XY_prior[self.intervention_indices, :], dim=1
+                    ).values  # [n_features_X_do]
+                    y_max = torch.max(
+                        self.XY_prior[self.intervention_indices, :], dim=1
+                    ).values  # [n_features_X_do]
+
+                    new_XY = new_XY.expand(
+                        batch_size, -1, -1
+                    )  # Shape: [batch_size, n_features, n_samples_data]
+
+                    for i in range(batch_size):
+                        new_samples = Uniform(y_min, y_max).sample((new_XY.shape[2],))
+                        new_XY[i, self.intervention_indices, :] = new_samples.T
+
+                        mu_batch, sigma_batch = self._compute_prior_parameters(
+                            new_XY[i, :, :]
+                        )
+                        mu[i] = mu_batch
+                        sigma[i] = sigma_batch
+
+        # TODO: assert dimension of mu and sigma
+
+        if mu.dim() == 1:
+            mu = mu.unsqueeze(0)  # Shape: [1, n_features]
+            sigma = sigma.unsqueeze(0)  # Shape: [1, n_features, n_features]
 
         (
             mu_target_given_obs,
             Sigma_target_given_obs,
-        ) = self._compute_conditional_parameters(mu, sigma, X_query, batch_size)
+        ) = self._compute_conditional_parameters(
+            mu, sigma, X_query
+        )  # [batch_size,
 
         # Use MultivariateNormal for PDF evaluation
         mvn = MultivariateNormal(
@@ -78,33 +115,30 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
 
         return mean, covariance
 
-    def _compute_conditional_parameters(self, mu, sigma, X_query, batch_size):
-        # Expand mu and sigma for broadcasting
-        mu_expanded = mu.unsqueeze(0)  # Shape: [1, n_features]
-        sigma_expanded = sigma.unsqueeze(0)  # Shape: [1, n_features, n_features]
+    def _compute_conditional_parameters(self, mu, sigma, X_query):
 
         # Validate indices
         assert all(
-            0 <= idx < mu.shape[0] for idx in self.Y_indices
+            0 <= idx < mu.shape[1] for idx in self.Y_indices
         ), "Y_indices out of bounds"
         assert all(
-            0 <= idx < mu.shape[0] for idx in self.X_indices
+            0 <= idx < mu.shape[1] for idx in self.X_indices
         ), "X_indices out of bounds"
 
         # Partition the mean vector
-        mu_target = mu_expanded[:, self.Y_indices]  # Shape: [1, n_target_features]
-        mu_obs = mu_expanded[:, self.X_indices]  # Shape: [1, n_obs_features]
+        mu_target = mu[:, self.Y_indices]  # Shape: [batch_size, n_target_features]
+        mu_obs = mu[:, self.X_indices]  # Shape: [batch_size, n_obs_features]
 
         # Partition the covariance matrix
-        sigma_aa = sigma_expanded[:, self.Y_indices][
+        sigma_aa = sigma[:, self.Y_indices][
             :, :, self.Y_indices
-        ]  # [1, n_target_features, n_target_features]
-        sigma_bb = sigma_expanded[:, self.X_indices][
+        ]  # [batch_size, n_target_features, n_target_features]
+        sigma_bb = sigma[:, self.X_indices][
             :, :, self.X_indices
-        ]  # [1, n_obs_features, n_obs_features]
-        sigma_ab = sigma_expanded[:, self.Y_indices][
+        ]  # [batch_size, n_obs_features, n_obs_features]
+        sigma_ab = sigma[:, self.Y_indices][
             :, :, self.X_indices
-        ]  # [1, n_target_features, n_obs_features]
+        ]  # [batch_size, n_target_features, n_obs_features]
 
         # Add tolerance to sigma_bb diagonal to prevent singularity
         sigma_bb = sigma_bb + 1e-8 * torch.eye(
@@ -114,7 +148,7 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
         # Compute the inverse of sigma_bb
         inv_sigma_bb = torch.linalg.inv(
             sigma_bb
-        )  # Shape: [1, n_obs_features, n_obs_features]
+        )  # Shape: [batch_size, n_obs_features, n_obs_features]
 
         # Calculate the deviation of observed values from their mean
         obs_diff = (X_query - mu_obs).unsqueeze(
@@ -122,20 +156,14 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
         )  # Shape: [batch_size, n_obs_features, 1]
 
         # Compute the conditional mean of target features given observed values
-        mu_target_given_obs = (
-            mu_target.unsqueeze(0)
-            + torch.matmul(sigma_ab, torch.matmul(inv_sigma_bb, obs_diff))
-        ).squeeze(
-            -1
-        )  # Shape: [batch_size, n_target_features]
+        mu_target_given_obs = mu_target + torch.matmul(
+            sigma_ab, torch.matmul(inv_sigma_bb, obs_diff)
+        ).squeeze(-1)
 
         # Compute the conditional covariance of target features given observed values
         Sigma_target_given_obs = sigma_aa - torch.matmul(
             sigma_ab, torch.matmul(inv_sigma_bb, sigma_ab.transpose(-1, -2))
-        )  # Shape: [1, n_target_features, n_target_features]
-
-        # Expand covariance to match the batch size
-        Sigma_target_given_obs = Sigma_target_given_obs.expand(batch_size, -1, -1)
+        )  # Shape: [batch_size, n_target_features, n_target_features]
 
         return mu_target_given_obs, Sigma_target_given_obs
 
@@ -149,7 +177,7 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
                 Y_values, device=self.XY_prior.device
             )  # [batch_size, n_target_features, n_samples]
 
-            for i in range(n_samples):
+            for i in range(Y_values.shape[2]):
                 # Extract the i-th sample for all batches
                 Y_sample = Y_values[:, :, i]  # Shape: [batch_size, n_target_features]
 

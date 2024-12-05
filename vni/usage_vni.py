@@ -2,11 +2,12 @@ from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import torch
-from tqdm import tqdm
 
-from vni.utils import create_estimator
+import torch
+
+from vni.base.estimator import BaseEstimator
+from vni.non_parametric_estimators.kde import MultivariateGaussianKDE
+from vni.parametric_estimators.mean_covariance import MeanCovarianceEstimator
 
 
 class VNI:
@@ -38,7 +39,7 @@ class VNI:
 
         # Set attributes and initialize the estimator
         self.intervention_indices = intervention_indices
-        self.estimator = create_estimator(
+        self.estimator = self._create_estimator(
             estimator_config, X_indices, Y_indices, intervention_indices
         )
         self.estimator.fit(XY_prior_tensor)
@@ -121,59 +122,16 @@ class VNI:
         plt.grid(True)
         plt.show()
 
-
-if __name__ == "__main__":
-
-    target_features = ["agent_0_reward"]
-    intervention_features = ["agent_0_action_0"]
-
-    df = pd.read_pickle("../data/df_navigation_pomdp_discrete_actions_0.pkl")
-    agent0_columns = [col for col in df.columns if "agent_0" in col]
-    df = df.loc[:, agent0_columns]
-
-    Y_indices = [
-        df.columns.get_loc(col)
-        for col in df.columns.to_list()
-        if col in target_features
-    ]
-    X_indices = [
-        df.columns.get_loc(col)
-        for col in df.columns.to_list()
-        if col not in target_features and col not in intervention_features
-    ]
-    intervention_indices = [
-        df.columns.get_loc(col)
-        for col in df.columns.to_list()
-        if col in intervention_features
-    ]
-
-    obs_features = [s for s in agent0_columns if s not in target_features]
-    X = df.loc[:, agent0_columns]
-    Y = df.loc[:, target_features]
-
-    XY_prior_tensor = torch.tensor(df.values, dtype=torch.float32, device="cuda")
-
-    estimator_config = {}
-
-    vni = VNI(
-        XY_prior_tensor.T, estimator_config, X_indices, Y_indices, intervention_indices
-    )
-
-    batch_size = 1
-    n_samples = 128
-    for t in tqdm(range(batch_size, XY_prior_tensor.shape[0], batch_size)):
-
-        true_values = XY_prior_tensor[t - batch_size : t, Y_indices]
-
-        X_query = XY_prior_tensor[t - batch_size : t, X_indices]
-        Y_query = None  # true_values.clone()
-        X_do = XY_prior_tensor[t - batch_size : t, intervention_indices]
-
-        pdf, y_values = vni.query(
-            X_query,
-            Y_query=Y_query,
-            X_do=X_do,
-            n_samples=n_samples,
-        )  # [batch_size, n_target_features, n_samples]
-
-        vni.plot_result(pdf, y_values, true_values)
+    @staticmethod
+    def _create_estimator(
+        config_params: Dict,
+        X_indices: List[int],
+        Y_indices: List[int],
+        intervention_indices: List[int] = None,
+    ) -> BaseEstimator:
+        if config_params["estimator"] == "multivariate_gaussian_kde":
+            return MultivariateGaussianKDE(X_indices, Y_indices, intervention_indices)
+        elif config_params["estimator"] == "mean_covariance":
+            return MeanCovarianceEstimator(X_indices, Y_indices, intervention_indices)
+        else:
+            raise ValueError("problem")

@@ -85,7 +85,7 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
             Sigma_target_given_obs,
         ) = self._compute_conditional_parameters(
             mu, sigma, X_query
-        )  # [batch_size,
+        )  # [batch_size]
 
         # Use MultivariateNormal for PDF evaluation
         mvn = MultivariateNormal(
@@ -112,6 +112,8 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
             1
         )  # Center the data along the sample dimension
         covariance = (centered_data @ centered_data.T) / (XY.shape[1] - 1)  # Covariance
+
+        covariance = self._ensure_covariance_matrix(covariance)
 
         return mean, covariance
 
@@ -165,6 +167,8 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
             sigma_ab, torch.matmul(inv_sigma_bb, sigma_ab.transpose(-1, -2))
         )  # Shape: [batch_size, n_target_features, n_target_features]
 
+        Sigma_target_given_obs = self._ensure_covariance_matrix(Sigma_target_given_obs)
+
         return mu_target_given_obs, Sigma_target_given_obs
 
     def _evaluate_Y(self, Y_query, dist, n_samples, batch_size):
@@ -201,3 +205,32 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
         )  # [batch_size, n_target_features, n_samples] if no Y_query; else [batch_size, n_target_features, 1]
 
         return pdf_Y, Y_values
+
+    def _ensure_covariance_matrix(
+        self, covariance_matrix: torch.Tensor
+    ) -> torch.Tensor:
+        # Symmetrize the matrix
+        covariance_matrix = 0.5 * (
+            covariance_matrix + covariance_matrix.transpose(-1, -2)
+        )
+
+        # Add small value to diagonal
+        epsilon = 1e-5
+        covariance_matrix += epsilon * torch.eye(
+            covariance_matrix.size(-1), device=covariance_matrix.device
+        )
+
+        # Verify positive definiteness
+        eigenvalues = torch.linalg.eigvalsh(covariance_matrix)
+        if not torch.all(eigenvalues > 0):
+            # print("Matrix is not positive definite. Applying fallback.")
+
+            # Apply fallback
+            average_variance = torch.mean(
+                torch.diagonal(covariance_matrix, dim1=-2, dim2=-1)
+            )
+            covariance_matrix = average_variance * torch.eye(
+                covariance_matrix.size(-1), device=covariance_matrix.device
+            )
+
+        return covariance_matrix

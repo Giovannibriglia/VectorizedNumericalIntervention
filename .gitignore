@@ -5,3 +5,6 @@ prove
 data/*
 
 .venv
+vni.egg-info
+build
+dist

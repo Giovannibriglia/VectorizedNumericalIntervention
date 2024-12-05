@@ -9,6 +9,7 @@
 - [x] Handle high dimensional data in VNI
 - [x] Handle intervention with an entire set of feature values -> hint: use uniform distribution
 - [ ] Develop tests
+- [ ] Usage VNI - configuration files
 - [X] Handle Batch of Queries
 - [ ] Define new interventional distributions
 - [ ] Add visualization plots
@@ -21,8 +22,8 @@
 - [ ] Update Prior
 
 ### Usage
-- [ ] Usage for benchmark
-- [ ] Usage for single prediction vs batch prediction
+- [X] Usage for benchmark
+- [X] Usage for single prediction vs batch prediction
 - [ ] Usage for planning - representation
 
 ### Repo

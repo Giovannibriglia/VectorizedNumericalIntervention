@@ -74,8 +74,6 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
                         mu[i] = mu_batch
                         sigma[i] = sigma_batch
 
-        # TODO: assert dimension of mu and sigma
-
         if mu.dim() == 1:
             mu = mu.unsqueeze(0)  # Shape: [1, n_features]
             sigma = sigma.unsqueeze(0)  # Shape: [1, n_features, n_features]
@@ -209,28 +207,56 @@ class MeanCovarianceEstimator(BaseParametricEstimator):
     def _ensure_covariance_matrix(
         self, covariance_matrix: torch.Tensor
     ) -> torch.Tensor:
-        # Symmetrize the matrix
-        covariance_matrix = 0.5 * (
-            covariance_matrix + covariance_matrix.transpose(-1, -2)
-        )
+        """
+        Validate and ensure the covariance matrix is symmetric, positive definite,
+        and well-conditioned for a batch of covariance matrices.
 
-        # Add small value to diagonal
-        epsilon = 1e-5
-        covariance_matrix += epsilon * torch.eye(
-            covariance_matrix.size(-1), device=covariance_matrix.device
-        )
+        Args:
+            covariance_matrix (torch.Tensor): Covariance matrix of shape (batch_size, n, n).
 
-        # Verify positive definiteness
-        eigenvalues = torch.linalg.eigvalsh(covariance_matrix)
-        if not torch.all(eigenvalues > 0):
-            # print("Matrix is not positive definite. Applying fallback.")
+        Returns:
+            torch.Tensor: Validated and corrected covariance matrix with the same shape as the input.
+        """
+        # Save the initial shape to ensure it is preserved
+        initial_shape = covariance_matrix.shape
 
-            # Apply fallback
-            average_variance = torch.mean(
-                torch.diagonal(covariance_matrix, dim1=-2, dim2=-1)
+        # Ensure symmetry
+        if not torch.allclose(
+            covariance_matrix, covariance_matrix.transpose(-1, -2), atol=1e-5
+        ):
+            covariance_matrix = 0.5 * (
+                covariance_matrix + covariance_matrix.transpose(-1, -2)
             )
-            covariance_matrix = average_variance * torch.eye(
+
+        # Add small value to the diagonal (regularization)
+        epsilon = 1e-5
+        eye = torch.eye(covariance_matrix.size(-1), device=covariance_matrix.device)
+        covariance_matrix += epsilon * eye
+
+        # Ensure positive diagonal values
+        diag = torch.diagonal(covariance_matrix, dim1=-2, dim2=-1)
+        diag = torch.clamp(
+            diag, min=1e-6
+        )  # Replace negatives with small positive values
+        covariance_matrix = covariance_matrix.clone()
+        covariance_matrix.diagonal(dim1=-2, dim2=-1).copy_(diag)
+
+        # Check for positive definiteness
+        try:
+            torch.linalg.cholesky(covariance_matrix)
+        except RuntimeError:
+            # Handle ill-conditioned matrices
+            # print("Matrix is not positive definite. Applying fallback.")
+            average_variance = torch.mean(diag)
+            fallback = average_variance * torch.eye(
                 covariance_matrix.size(-1), device=covariance_matrix.device
             )
+            fallback = fallback.expand_as(covariance_matrix)  # Preserve original shape
+            covariance_matrix = fallback
+
+        # Ensure the output shape matches the input shape
+        assert (
+            covariance_matrix.shape == initial_shape
+        ), f"covariance matrix has different shape: {covariance_matrix.shape}"
 
         return covariance_matrix

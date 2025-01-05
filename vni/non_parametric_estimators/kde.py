@@ -1,9 +1,7 @@
 from abc import abstractmethod
-from typing import List, Tuple
+from typing import Tuple
 
 import torch
-
-from torch.distributions import Normal
 
 from vni.base.estimator import BaseNonParametricEstimator
 
@@ -11,44 +9,37 @@ from vni.base.estimator import BaseNonParametricEstimator
 class KernelDensityEstimator(BaseNonParametricEstimator):
     def __init__(
         self,
-        X_indices: List[int],
-        Y_indices: List[int],
-        intervention_indices: List[int] = None,
     ):
-        super(KernelDensityEstimator, self).__init__(
-            X_indices, Y_indices, intervention_indices
-        )
-        self.bandwidth = 0.5
+        super(KernelDensityEstimator, self).__init__()
 
-    def predict(
-        self,
-        X_query: torch.Tensor,
-        Y_query: torch.Tensor = None,
-        X_do: torch.Tensor = None,
-        n_samples: int = 1000,
+    def _fit(self):
+        pass
+
+    def _predict(
+        self, X_values: torch.Tensor, Y_values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
 
-        batch_size = X_query.shape[0]
+        :param X_values: [batch_size, n_features_X+n_features_X_do, n_samples_x]
+        :param Y_values: [batch_size, n_features_X+n_features_X_do, 1]
+        :return: pdf and Y_values. [batch_size, n_target_features, n_samples_Y_values], [batch_size, n_target_features, n_samples_Y_values]
+        """
+        batch_size = X_values.shape[0]
 
         Y_prior = self.XY_prior[self.Y_indices, :].expand(
             batch_size, -1, -1
         )  # Shape: [batch_size, n_target_features, n_samples_data]
 
-        # Define or sample Y values based on the query.
-        Y_values = self._define_Y_values(
-            Y_query, n_samples, batch_size
-        )  # Shape: [batch_size, n_target_features, n_samples] if Y_query is None, else [batch_size, n_target_features, 1]
-
         y_kernel = self._compute_kernel_density(
             Y_prior, Y_values
         )  # Shape: [batch_size, n_target_features, n_samples]
 
-        new_X_prior, new_X_query = self._define_X(
-            X_query, X_do
-        )  # [batch_size, n_feat_X+n_feat_X_do, n_samples_data]. Shape: [batch_size, n_feat_X+n_feat_X_do, 1]
+        X_prior = self.XY_prior[self.all_X_indices, :].expand(
+            batch_size, -1, -1
+        )  # Shape: [batch_size, n_X_features+n_X_do_features, n_samples_data]
 
         x_kernel = self._compute_kernel_density(
-            new_X_prior, new_X_query
+            X_prior, X_values
         )  # Shape: [batch_size, n_feat_X+n_feat_X_do, 1]
 
         joint_density = (x_kernel.sum(dim=1, keepdim=True) * y_kernel) / Y_values.shape[
@@ -56,7 +47,7 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
         ]  # Shape: [batch_size, n_target_features, n_samples_Y_values]
 
         # Compute marginal KDE
-        marginal_density = (x_kernel * new_X_prior).sum(
+        marginal_density = (x_kernel * X_prior).sum(
             dim=2, keepdim=True
         )  # Shape: [batch_size, n_feat_X+n_feat_X_do, 1]
 
@@ -70,8 +61,6 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
 
         # Compute the PDF
         pdf = joint_density / marginal_mean
-
-        self._check_output(pdf, Y_values, Y_query, batch_size, n_samples)
 
         return (
             pdf,
@@ -129,86 +118,14 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
     def _kernel_function(self, dist_sq):
         raise NotImplementedError
 
-    def _define_X(self, X_query: torch.Tensor, X_do: torch.Tensor):
-        """
-
-        :param X_query: observation. Shape: [batch_size, n_features_X, 1]
-        :param X_do: intervention. Shape: [batch_size, n_features_X_do, 1]
-        :return: X_prior and X_points. Shape: [batch_size, n_features_X+n_features_X_do, n_samples_data]. Shape: [batch_size, n_features_X+n_features_X_do, 1]
-        """
-
-        batch_size = X_query.shape[0]
-
-        if X_do is None:
-            X_do_data = None
-            X_do_query = None
-        else:
-            X_do_data, X_do_query = self._define_X_do(
-                X_do
-            )  # Shape: X_do_prior: [batch_size, n_features_X_do, n_samples_data] or None. Shape X_do_samples: [batch_size, n_features_X_do, 1] if X_do else None
-
-        X_prior = self.XY_prior[self.X_indices, :].expand(
-            batch_size, -1, -1
-        )  # [batch_size, n_features_X, n_samples_data]
-
-        if X_do_data is None or X_do_query is None:
-            return X_prior, X_query.unsqueeze(-1)
-        else:
-            X_concat = torch.cat(
-                (X_prior, X_do_data), dim=1
-            )  # [batch_size, n_features_X+n_features_X_do, n_samples_data]
-            X_query_concat = torch.cat(
-                (X_query.unsqueeze(-1), X_do_query), dim=1
-            )  # [batch_size, n_features_X+n_features_X_do, 1]
-
-            return X_concat, X_query_concat
-
-    def _define_X_do(self, X_do: torch.Tensor):
-        """
-        :param X_do: intervention. Shape: [batch_size, n_features, n_samples_data]
-        :return: X_do_data, X_do_query. # Shape: [batch_size, n_features_X_do, n_samples_data] if X_do else None. Shape: [batch_size, n_features, 1] if X_do else None
-        """
-        batch_size = X_do.shape[0]
-
-        if self.intervention_indices is None:
-            if X_do is None:
-                X_do_data = None
-                X_do_query = None
-            else:
-                raise ValueError(
-                    "intervention indices are not initialized, make sure they are"
-                )
-        else:
-            X_do_query = X_do.clone().unsqueeze(-1)  # [batch_size, n_features_X_do, 1]
-
-            if X_do is None:
-                X_do_data = self.XY_prior_intervention[
-                    self.intervention_indices, :
-                ].expand(
-                    batch_size, -1, -1
-                )  # Shape: [batch_size, n_features_X_do, n_samples_data]
-
-            else:
-                n_samples_data = self.XY_prior.shape[1]
-                tolerance = torch.full(X_do.shape, 1e-8, device=X_do.device)
-                X_do_data = (
-                    Normal(X_do, tolerance).sample((n_samples_data,)).permute(1, 2, 0)
-                )  # Shape: [batch_size, n_features_X_do, n_samples_data]
-
-        return X_do_data, X_do_query
-
 
 class MultivariateGaussianKDE(KernelDensityEstimator):
     def __init__(
         self,
-        X_indices: List[int],
-        Y_indices: List[int],
-        intervention_indices: List[int] = None,
     ):
-        super(MultivariateGaussianKDE, self).__init__(
-            X_indices, Y_indices, intervention_indices
-        )
+        super(MultivariateGaussianKDE, self).__init__()
         self.bandwidth = 0.5
+        print("MultivariateGaussianKDE")
 
     def _kernel_function(self, diff):
         """

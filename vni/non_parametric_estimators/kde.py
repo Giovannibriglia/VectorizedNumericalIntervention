@@ -23,7 +23,6 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
         self, X_values: torch.Tensor, Y_values: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-
         :param X_values: [batch_size, n_features_X+n_features_X_do, n_samples_x]
         :param Y_values: [batch_size, n_features_X+n_features_X_do, 1]
         :return: pdf and Y_values. [batch_size, n_target_features, n_samples_Y_values], [batch_size, n_target_features, n_samples_Y_values]

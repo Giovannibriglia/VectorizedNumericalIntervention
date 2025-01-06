@@ -4,10 +4,20 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+    precision_score,
+    r2_score,
+    recall_score,
+)
 
 from tqdm import tqdm
 
-from vni.usage_vni import VNI
+from vni.vni import VNI
 
 
 def yaml_to_dict(file_path: str) -> Dict:
@@ -55,18 +65,18 @@ def get_max_pdf_values(
 
 def benchmarking_df(
     df: pd.DataFrame,
+    estimator_config: Dict,
     target_features: List[str],
     intervention_features: List[str] = None,
     batch_size: int = 64,
+    n_samples_x: int = 1024,
     n_samples_y: int = 1024,
     show_res: bool = False,
-    estimator_config: Dict = None,
     density_value: bool = False,
+    device: str = "cuda",
 ):
-    df = df.apply(lambda col: col.fillna(col.mean()), axis=0)
-
     vni, XY_prior_tensor, X_indices, Y_indices, intervention_indices = setup_vni(
-        df, target_features, intervention_features, estimator_config
+        df, target_features, intervention_features, estimator_config, device
     )
     y_true = XY_prior_tensor[:, Y_indices]
     y_pred = np.zeros_like(y_true.cpu())  # [n_samples_data, n_features_y]
@@ -82,7 +92,8 @@ def benchmarking_df(
             X_query,
             Y_query=Y_query,
             X_do=X_do,
-            n_samples=n_samples_y,
+            n_samples_x=n_samples_x,
+            n_samples_y=n_samples_y,
         )  # [batch_size, n_target_features, n_samples]
 
         if show_res:
@@ -98,6 +109,7 @@ def setup_vni(
     target_features: List[str],
     intervention_features: List[str] = None,
     estimator_config: Dict = None,
+    device: str = "cuda",
 ):
 
     df = df.apply(lambda col: col.fillna(col.mean()), axis=0)
@@ -118,14 +130,11 @@ def setup_vni(
         if col in intervention_features
     ]
 
-    XY_prior_tensor = torch.tensor(df.values, dtype=torch.float32, device="cuda")
+    XY_prior_tensor = torch.tensor(df.values, dtype=torch.float32, device=device)
 
-    # TODO: set estimator
-    estimator_config = {"estimator": "multivariate_gaussian_kde"}
+    vni = VNI(XY_prior_tensor.T, estimator_config)
 
-    vni = VNI(
-        XY_prior_tensor.T, estimator_config, X_indices, Y_indices, intervention_indices
-    )
+    vni.set_indices(X_indices, Y_indices, intervention_indices)
 
     return vni, XY_prior_tensor, X_indices, Y_indices, intervention_indices
 
@@ -135,27 +144,28 @@ def single_query(
     X_query: torch.Tensor,
     Y_query: torch.Tensor = None,
     X_do: torch.Tensor = None,
-    n_samples_y: int = 512,
+    batch_size_max: int = 64,
+    show_res: bool = False,
 ):
+    n_samples = X_query.shape[0]
+    if X_query.shape[0] > batch_size_max:
+        y_pred = np.zeros((n_samples, 1))  # [n_samples_data, n_features_y]
 
-    if X_query.shape[0] > 64:
-        batch_size = 32
-        y_pred = np.zeros((X_query.shape[0], 1))  # [n_samples_data, n_features_y]
+        for t in range(batch_size_max, X_query.shape[0], batch_size_max):
 
-        for t in range(batch_size, X_query.shape[0], batch_size):
-
-            X_query_new = X_query[t - batch_size : t]
-            Y_query_new = None if Y_query is None else Y_query[t - batch_size : t]
-            X_do_new = X_do[t - batch_size : t]
+            X_query_new = X_query[t - batch_size_max : t]
+            Y_query_new = None if Y_query is None else Y_query[t - batch_size_max : t]
+            X_do_new = None if X_do is None else X_do[t - batch_size_max : t]
 
             pdf, y_values = vni.query(
                 X_query_new,
                 Y_query=Y_query_new,
                 X_do=X_do_new,
-                n_samples=n_samples_y,
+                n_samples_x=n_samples,
+                n_samples_y=n_samples,
             )  # [batch_size, n_target_features, n_samples]
 
-            y_pred[t - batch_size : t, :] = (
+            y_pred[t - batch_size_max : t, :] = (
                 get_max_pdf_values(pdf, y_values).cpu().numpy()
             )
     else:
@@ -163,9 +173,62 @@ def single_query(
             X_query,
             Y_query=Y_query,
             X_do=X_do,
-            n_samples=n_samples_y,
+            n_samples_x=n_samples,
+            n_samples_y=n_samples,
         )  # [X_query.shape[0], n_target_features, n_samples]
 
         y_pred = get_max_pdf_values(pdf, y_values).cpu().numpy()
 
+    if show_res:
+        vni.plot_result(pdf, y_values, Y_query)
+
     return y_pred
+
+
+def print_metrics(y_pred, y_true):
+    """
+    Prints MAE, MSE, and R^2 metrics for the given predictions and ground truth.
+
+    Args:
+        y_pred (torch.Tensor or numpy.ndarray): Predicted values
+        y_true (torch.Tensor or numpy.ndarray): Ground truth values
+    """
+    # Convert tensors to numpy arrays if necessary
+    if isinstance(y_pred, torch.Tensor):
+        y_pred = y_pred.cpu().detach().numpy()
+    if isinstance(y_true, torch.Tensor):
+        y_true = y_true.cpu().detach().numpy()
+
+    # Ensure both are 1D arrays for compatibility with metrics
+    y_pred = y_pred.flatten()
+    y_true = y_true.flatten()
+
+    # Compute metrics
+    mae = mean_absolute_error(y_true, y_pred)
+    mse = mean_squared_error(y_true, y_pred)
+    r2 = r2_score(y_true, y_pred)
+
+    # Print metrics
+    print(f"Mean Absolute Error (MAE): {mae:.4f}")
+    print(f"Mean Squared Error (MSE): {mse:.4f}")
+    print(f"R-squared (R^2): {r2:.4f}")
+
+    # Handle binary classification: Apply threshold to y_pred
+    if y_pred.ndim > 1 and y_pred.shape[1] > 1:
+        y_pred = np.argmax(y_pred, axis=1)  # For multi-class
+    else:
+        y_pred = (y_pred >= 0.5).astype(int)  # For binary
+
+    y_true = y_true.flatten().astype(int)
+    acc = accuracy_score(y_true, y_pred)
+    precision = precision_score(y_true, y_pred, average="weighted")
+    recall = recall_score(y_true, y_pred, average="weighted")
+    f1 = f1_score(y_true, y_pred, average="weighted")
+    conf_matrix = confusion_matrix(y_true, y_pred)
+
+    print("Classification Metrics:")
+    print(f"  Accuracy: {acc:.4f}")
+    print(f"  Precision: {precision:.4f}")
+    print(f"  Recall: {recall:.4f}")
+    print(f"  F1 Score: {f1:.4f}")
+    print(f"  Confusion Matrix:\n{conf_matrix}")

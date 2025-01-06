@@ -13,47 +13,53 @@ from vni.parametric_estimators.mean_covariance import MeanCovarianceEstimator
 class VNI:
     def __init__(
         self,
-        XY_prior_tensor: torch.Tensor,
+        tensor_prior_data: torch.Tensor,
         estimator_config: Dict,
-        X_indices: List[int],
-        Y_indices: List[int],
+    ):
+        self.estimator = self._create_estimator(estimator_config)
+        self.estimator.fit(tensor_prior_data)
+
+        self.X_indices = None
+        self.X_do_indices = None
+        self.Y_indices = None
+
+    def set_indices(
+        self,
+        obs_indices: List[int],
+        target_indices: List[int],
         intervention_indices: List[int] = None,
     ):
         # Ensure Y_indices and intervention_indices are not None
-        Y_indices = Y_indices if Y_indices is not None else []
+        target_indices = target_indices if target_indices is not None else []
         intervention_indices = (
             intervention_indices if intervention_indices is not None else []
         )
 
-        """# 1) Check that intervention_indices are in X_indices
-        if not set(intervention_indices).issubset(X_indices):
-            raise ValueError("All intervention_indices must be a subset of X_indices.")"""
-
-        # 2) Check that X_indices and Y_indices are not overlapping
-        if set(X_indices) & set(Y_indices):
+        # Check that X_indices and Y_indices are not overlapping
+        if set(obs_indices) & set(target_indices):
             raise ValueError("X_indices and Y_indices must not overlap.")
 
-        # 3) Check that no intervention_indices are in Y_indices
-        if set(intervention_indices) & set(Y_indices):
+        # Check that no intervention_indices are in Y_indices
+        if set(intervention_indices) & set(target_indices):
             raise ValueError("intervention_indices must not overlap with Y_indices.")
 
-        # Set attributes and initialize the estimator
-        self.intervention_indices = intervention_indices
-        self.estimator = self._create_estimator(
-            estimator_config, X_indices, Y_indices, intervention_indices
-        )
-        self.estimator.fit(XY_prior_tensor)
+        self.X_indices = obs_indices
+        self.X_do_indices = intervention_indices
+        self.Y_indices = target_indices
+
+        self.estimator.set_indices(self.X_indices, self.Y_indices, self.X_do_indices)
 
     def query(
         self,
         X_query: torch.Tensor,
         Y_query: torch.Tensor = None,
         X_do: torch.Tensor = None,
-        n_samples: int = None,
+        n_samples_x: int = 1024,
+        n_samples_y: int = 1024,
     ):
         X_query, Y_query, X_do = self._check_input(X_query, Y_query, X_do)
 
-        return self.estimator.predict(X_query, Y_query, X_do, n_samples)
+        return self.estimator.predict(X_query, Y_query, X_do, n_samples_x, n_samples_y)
 
     @staticmethod
     def _check_input(
@@ -85,7 +91,7 @@ class VNI:
 
     @staticmethod
     def plot_result(
-        pdf: torch.Tensor, y_values: torch.Tensor, true_values: torch.Tensor
+        pdf: torch.Tensor, y_values: torch.Tensor, true_values: torch.Tensor = None
     ):
         """
         :param pdf: probability density function over Y-values. Shape [batch_size, n_target_features, n_samples]
@@ -95,7 +101,7 @@ class VNI:
         """
         pdf = pdf.cpu().numpy()
         y_values = y_values.cpu().numpy()
-        true_values = true_values.cpu().numpy()
+        true_values = true_values.cpu().numpy() if true_values is not None else None
 
         batch_index = 0
         target_feature_index = 0
@@ -104,19 +110,21 @@ class VNI:
         if pdf.shape[2] > 1:
             pdf1 = pdf[batch_index][target_feature_index]
             y_values1 = y_values[batch_index][target_feature_index]
-            true_values1 = true_values[batch_index][target_feature_index]
 
             plt.plot(y_values1, pdf1, label="predicted pdf")
-            plt.scatter(
-                true_values1,
-                np.max(pdf1),
-                c="red",
-                label="ground truth",
-            )
+            if true_values is not None:
+                true_values1 = true_values[batch_index][target_feature_index]
+                plt.scatter(
+                    true_values1,
+                    np.max(pdf1),
+                    c="red",
+                    label="ground truth",
+                )
         else:
             plt.scatter(y_values, pdf, label="predicted density value")
 
         plt.xlabel("target feature values")
+        plt.ylim((-0.01, 1.01))
         plt.ylabel("PDF")
         plt.legend(loc="best")
         plt.grid(True)
@@ -125,13 +133,15 @@ class VNI:
     @staticmethod
     def _create_estimator(
         config_params: Dict,
-        X_indices: List[int],
-        Y_indices: List[int],
-        intervention_indices: List[int] = None,
     ) -> BaseEstimator:
+        # TODO: set estimator config
         if config_params["estimator"] == "multivariate_gaussian_kde":
-            return MultivariateGaussianKDE(X_indices, Y_indices, intervention_indices)
+            return (
+                MultivariateGaussianKDE()
+            )  # MultivariateGaussianKDE(X_indices, Y_indices, intervention_indices)
         elif config_params["estimator"] == "mean_covariance":
-            return MeanCovarianceEstimator(X_indices, Y_indices, intervention_indices)
+            return (
+                MeanCovarianceEstimator()
+            )  # MeanCovarianceEstimator(X_indices, Y_indices, intervention_indices)
         else:
             raise ValueError("problem")

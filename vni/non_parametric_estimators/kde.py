@@ -36,7 +36,7 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
 
         y_kernel = self._compute_kernel_density(
             Y_prior, Y_values
-        )  # Shape: [batch_size, n_target_features, n_samples]
+        )  # Shape: [batch_size, n_target_features, n_samples_y]
 
         X_prior = self.XY_prior[self.all_X_indices, :].expand(
             batch_size, -1, -1
@@ -44,11 +44,11 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
 
         x_kernel = self._compute_kernel_density(
             X_prior, X_values
-        )  # Shape: [batch_size, n_feat_X+n_feat_X_do, 1]
+        )  # Shape: [batch_size, n_feat_X+n_feat_X_do, n_samples_x]
 
         joint_density = (x_kernel.sum(dim=1, keepdim=True) * y_kernel) / Y_values.shape[
             2
-        ]  # Shape: [batch_size, n_target_features, n_samples_Y_values]
+        ]  # Shape: [batch_size, n_target_features, n_samples_y]
 
         # Compute marginal KDE
         marginal_density = (x_kernel * X_prior).sum(
@@ -168,7 +168,11 @@ class MultivariateGaussianKDE(KernelDensityEstimator):
 
         # Normalize by bandwidth for kernel computation
         bandwidth = bandwidth.unsqueeze(-1)  # Add sample dimension for broadcasting
-        norm_diff = diff / bandwidth  # Normalize differences by bandwidth
+        assert (
+            diff.shape[0] == bandwidth.shape[0] and diff.shape[1] == bandwidth.shape[1]
+        ), f"{diff.shape} != {bandwidth.shape}"
+
+        norm_diff = diff / (bandwidth + 1e-10)  # Normalize differences by bandwidth
         kernel = torch.exp(-0.5 * norm_diff.pow(2))  # Gaussian kernel
 
         # Return normalized kernel values
@@ -227,6 +231,8 @@ class MultivariateGaussianKDE(KernelDensityEstimator):
         std_dev = torch.std(data, dim=2, unbiased=False)
 
         if d > 2:
-            return std_dev * (n_samples ** (-1 / (d + 4)))  # Scott's Rule
+            bandwidth = std_dev * (n_samples ** (-1 / (d + 4)))  # Scott's Rule
         else:
-            return std_dev * ((4 / (3 * n_samples)) ** 0.2)  # Silverman's Rule
+            bandwidth = std_dev * ((4 / (3 * n_samples)) ** 0.2)  # Silverman's Ruleù
+
+        return torch.clamp(bandwidth, min=1e-12)  # Small value to prevent log(0))

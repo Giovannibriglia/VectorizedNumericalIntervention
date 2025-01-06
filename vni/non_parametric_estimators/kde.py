@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import abstractmethod
 from typing import Tuple
 
@@ -9,8 +11,10 @@ from vni.base.estimator import BaseNonParametricEstimator
 class KernelDensityEstimator(BaseNonParametricEstimator):
     def __init__(
         self,
+        bandwidth_config: float | str = "adaptive",
     ):
         super(KernelDensityEstimator, self).__init__()
+        self.bandwidth_config = bandwidth_config
 
     def _fit(self):
         pass
@@ -115,19 +119,22 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
         return diff
 
     @abstractmethod
-    def _kernel_function(self, dist_sq):
+    def _kernel_function(self, dist_sq: torch.Tensor):
+        raise NotImplementedError
+
+    @abstractmethod
+    def _compute_bandwidth(self, data: torch.Tensor):
         raise NotImplementedError
 
 
 class MultivariateGaussianKDE(KernelDensityEstimator):
     def __init__(
         self,
+        bandwidth_config: float | str = "adaptive",
     ):
-        super(MultivariateGaussianKDE, self).__init__()
-        self.bandwidth = 0.5
-        print("MultivariateGaussianKDE")
+        super(MultivariateGaussianKDE, self).__init__(bandwidth_config)
 
-    def _kernel_function(self, diff):
+    def _kernel_function(self, diff: torch.Tensor):
         """
         Multivariate Gaussian kernel function (per dimension).
 
@@ -137,46 +144,89 @@ class MultivariateGaussianKDE(KernelDensityEstimator):
         Returns:
             kernel: torch.Tensor of shape [batch_size, d, n_samples], unnormalized kernel values.
         """
+
+        if isinstance(self.bandwidth_config, (float, int)):
+            bandwidth = self.bandwidth_config
+        if (
+            isinstance(self.bandwidth_config, str)
+            and self.bandwidth_config == "adaptive"
+        ):
+            bandwidth = self._compute_bandwidth(diff)
+
         # Ensure bandwidth has the correct shape
-        if isinstance(self.bandwidth, float):
-            # Scalar bandwidth applied equally to all dimensions
-            bandwidth = torch.full((diff.size(1),), self.bandwidth, device=diff.device)
+        if isinstance(bandwidth, (float, int)):
+            bandwidth = torch.full((diff.size(1),), bandwidth, device=diff.device)
+        elif bandwidth.ndimension() == 2 and bandwidth.size(1) == diff.size(1):
+            pass  # Shape [batch_size, d] is fine
         else:
-            # Use provided bandwidth tensor
-            bandwidth = self.bandwidth  # Shape: [d]
+            raise ValueError("Invalid bandwidth shape or configuration.")
 
-        # Normalize by bandwidth
-        norm_diff = diff / bandwidth.view(
-            1, -1, 1
-        )  # Adjust dimensions for broadcasting
-        kernel = torch.exp(
-            -0.5 * norm_diff.pow(2)
-        )  # Gaussian kernel (no product across dimensions)
+        # Compute normalization constant
+        norm_const = self._compute_normalization_constant(
+            diff.size(1), bandwidth, diff.device
+        )
 
-        d = diff.size(1)  # Dimensionality
-        norm_const = self._compute_normalization_constant(d, diff.device)
+        # Normalize by bandwidth for kernel computation
+        bandwidth = bandwidth.unsqueeze(-1)  # Add sample dimension for broadcasting
+        norm_diff = diff / bandwidth  # Normalize differences by bandwidth
+        kernel = torch.exp(-0.5 * norm_diff.pow(2))  # Gaussian kernel
 
         # Return normalized kernel values
         return kernel / norm_const
 
-    def _compute_normalization_constant(self, d, device):
+    def _compute_normalization_constant(
+        self, d: int, bandwidth: torch.Tensor | float, device: torch.device
+    ):
         """
         Compute the normalization constant for the multivariate Gaussian kernel.
 
         Args:
             d: int, dimensionality of the data.
+            bandwidth: torch.Tensor or float, the bandwidth parameter(s).
             device: torch.device, device for computation.
 
         Returns:
-            norm_const: Tensor, normalization constant.
+            norm_const: torch.Tensor, normalization constant.
         """
-        if isinstance(self.bandwidth, float):
-            bandwidth = torch.full((d,), self.bandwidth, device=device)
+        if isinstance(bandwidth, (float, int)):
+            # Scalar bandwidth applied equally to all dimensions
+            bandwidth = torch.full((d,), float(bandwidth), device=device)
+        elif isinstance(bandwidth, torch.Tensor):
+            # Ensure bandwidth is of the correct shape
+            if bandwidth.ndimension() == 1 and bandwidth.size(0) == d:
+                pass  # Correct shape [d]
+            elif bandwidth.ndimension() == 2 and bandwidth.size(1) == d:
+                # Adaptive bandwidth [batch_size, d]
+                bandwidth = bandwidth.mean(
+                    dim=0
+                )  # Take mean across batch for normalization
+            else:
+                raise ValueError(f"Unexpected bandwidth shape: {bandwidth.shape}")
         else:
-            bandwidth = self.bandwidth
+            raise TypeError(f"Unsupported type for bandwidth: {type(bandwidth)}")
 
         # Compute log-scale normalization constant
         log_norm_const = d * torch.log(
             torch.tensor(2 * torch.pi, device=device)
         ) + torch.sum(torch.log(bandwidth))
         return torch.exp(0.5 * log_norm_const)
+
+    def _compute_bandwidth(self, data: torch.Tensor):
+        """
+        Compute the bandwidth using Scott's Rule for d > 2 or Silverman's Rule for d <= 2.
+
+        Args:
+            data: torch.Tensor of shape [batch_size, d, n_samples].
+
+        Returns:
+            bandwidth: torch.Tensor of shape [batch_size, d].
+        """
+        _, d, n_samples = data.shape
+
+        # Compute standard deviation for each dimension, unbiased=False avoids DoF issues
+        std_dev = torch.std(data, dim=2, unbiased=False)
+
+        if d > 2:
+            return std_dev * (n_samples ** (-1 / (d + 4)))  # Scott's Rule
+        else:
+            return std_dev * ((4 / (3 * n_samples)) ** 0.2)  # Silverman's Rule

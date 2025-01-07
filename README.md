@@ -11,15 +11,18 @@
 - [ ] Develop tests
 - [ ] Usage VNI - configuration files
 - [X] Handle Batch of Queries
-- [ ] Define new interventional distributions
 - [ ] Add visualization plots
 
 ### KDE
 - [ ] Develop tests
 - [X] Handle Batch of Queries
 - [ ] New kernels
-- [X] Handle Query with Multi-Target
-- [ ] Update Prior
+- [ ] Handle Query with multiple target features
+- [ ] Handle different input size different from [batch_size, n_features, 1]
+
+### MeanCov
+- [ ] Develop tests
+- [X] Handle Batch of Queries
 
 ### Usage
 - [X] Usage for benchmark

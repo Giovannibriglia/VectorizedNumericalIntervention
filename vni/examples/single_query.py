@@ -5,9 +5,9 @@ from vni.utils import setup_vni, single_query
 
 if __name__ == "__main__":
     df = pd.read_pickle("../../data/FrozenLake-v1.pkl")
-    df = df.loc[:1024, ["obs_0", "action", "reward"]]
-    target_features = ["action"]
-    intervention_features = ["reward"]
+    df = df.loc[:1024]
+    target_features = ["reward"]
+    intervention_features = ["action"]
 
     estimator_config = {
         "estimator": "multivariate_gaussian_kde"
@@ -23,11 +23,10 @@ if __name__ == "__main__":
         df.iloc[:, X_indices].values, dtype=torch.float32, device=device
     )
 
-    single_query(vni, X_query, show_res=True)
+    Y_query = torch.tensor(
+        df.iloc[:, Y_indices].values, dtype=torch.float32, device=device
+    )
 
-    """
-    vni.set_indices(X_indices, Y_indices, intervention_indices)
+    y_pred = single_query(vni, X_query, show_res=True)
 
-    pdf, y_values = vni.query(X_query, n_samples_x=64, n_samples_y=64)
-
-    vni.plot_result(pdf, y_values)"""
+    # print(y_pred)

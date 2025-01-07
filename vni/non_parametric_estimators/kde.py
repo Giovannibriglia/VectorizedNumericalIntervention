@@ -50,8 +50,8 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
         ]  # Shape: [batch_size, n_target_features, n_samples_y]
 
         # Compute marginal KDE
-        marginal_density = (x_kernel * X_prior).sum(
-            dim=2, keepdim=True
+        marginal_density = self._compute_marginal_density(
+            X_prior, x_kernel
         )  # Shape: [batch_size, n_feat_X+n_feat_X_do, 1]
 
         marginal_mean = torch.mean(
@@ -89,10 +89,33 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
             prior_data, query_points
         )  # [batch_size, n_features, n_samples_data]
 
+        """if not torch.all(diff == 0):
+            dominant_order = self._compute_order_of_magnitude(diff)
+            diff = diff / (10 ** dominant_order.view(-1, 1, 1))"""
+
         # Compute the kernel values
         kernel_values = self._kernel_function(diff)
-
         return kernel_values
+
+    @staticmethod
+    def _compute_marginal_density(X_prior, x_kernel):
+        # Compute weights for marginalization over n_samples_data
+        X_prior = X_prior / X_prior.sum(
+            dim=2, keepdim=True
+        )  # Normalize along n_samples_data
+
+        # Perform weighted sum across n_samples_data
+        # Align X_prior with x_kernel's n_samples_x dimension
+        marginal_density = torch.einsum(
+            "bfn,bfd->bf", x_kernel, X_prior
+        )  # Weighted sum
+
+        # Add the final singleton dimension for the desired shape
+        marginal_density = marginal_density.unsqueeze(
+            -1
+        )  # Shape: [batch_size, n_features, 1]
+
+        return marginal_density
 
     @staticmethod
     def _compute_diff(prior_data: torch.Tensor, query_points: torch.Tensor):
@@ -106,6 +129,15 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
         Returns:
             diff: torch.Tensor of shape [batch_size, n_features, n_samples_y], summarized differences.
         """
+        # Sanity check for inputs
+        assert not torch.any(torch.isnan(prior_data)), "prior_data contains NaN values"
+        assert not torch.any(
+            torch.isnan(query_points)
+        ), "query_points contains NaN values"
+        assert not torch.any(torch.isinf(prior_data)), "prior_data contains inf values"
+        assert not torch.any(
+            torch.isinf(query_points)
+        ), "query_points contains inf values"
 
         # Compute absolute differences between each query point and all prior data points
         differences = torch.abs(
@@ -114,6 +146,11 @@ class KernelDensityEstimator(BaseNonParametricEstimator):
 
         # Summarize along the n_samples_data dimension (e.g., take the mean)
         diff = differences.mean(dim=-2)  # [batch_size, n_features, n_samples_y]
+
+        # Ensure diff contains no infinite values
+        assert not torch.any(
+            diff == torch.inf
+        ), f"diff contains infinite values at indices {torch.where(diff == torch.inf)}"
 
         return diff
 
@@ -141,78 +178,40 @@ class MultivariateGaussianKDE(KernelDensityEstimator):
             diff: torch.Tensor of shape [batch_size, d, n_samples], differences.
 
         Returns:
-            kernel: torch.Tensor of shape [batch_size, d, n_samples], unnormalized kernel values.
+            kernel: torch.Tensor of shape [batch_size, d, n_samples], normalized kernel values.
         """
-
+        # Determine bandwidth
         if isinstance(self.bandwidth_config, (float, int)):
-            bandwidth = self.bandwidth_config
-        if (
+            bandwidth = torch.full(
+                (diff.size(0), diff.size(1)),  # [batch_size, d]
+                self.bandwidth_config,
+                device=diff.device,
+            )
+        elif (
             isinstance(self.bandwidth_config, str)
             and self.bandwidth_config == "adaptive"
         ):
-            bandwidth = self._compute_bandwidth(diff)
-
-        # Ensure bandwidth has the correct shape
-        if isinstance(bandwidth, (float, int)):
-            bandwidth = torch.full((diff.size(1),), bandwidth, device=diff.device)
-        elif bandwidth.ndimension() == 2 and bandwidth.size(1) == diff.size(1):
-            pass  # Shape [batch_size, d] is fine
+            bandwidth = self._compute_bandwidth(diff)  # Shape: [batch_size, d]
         else:
-            raise ValueError("Invalid bandwidth shape or configuration.")
+            raise ValueError("Invalid bandwidth configuration.")
+
+        # Reshape bandwidth for broadcasting
+        bandwidth = bandwidth.unsqueeze(-1)  # Shape: [batch_size, d, 1]
 
         # Compute normalization constant
-        norm_const = self._compute_normalization_constant(
-            diff.size(1), bandwidth, diff.device
-        )
+        # dim = diff.size(1)  # Number of dimensions (d)
+        norm_const = (2 * torch.pi) ** 0.5 * bandwidth  # Shape: [batch_size, d, 1]
 
-        # Normalize by bandwidth for kernel computation
-        bandwidth = bandwidth.unsqueeze(-1)  # Add sample dimension for broadcasting
-        assert (
-            diff.shape[0] == bandwidth.shape[0] and diff.shape[1] == bandwidth.shape[1]
-        ), f"{diff.shape} != {bandwidth.shape}"
+        # Compute Gaussian kernel
+        norm_diff = diff / bandwidth  # Normalize differences by bandwidth
+        kernel = torch.exp(-0.5 * norm_diff.pow(2))  # Shape: [batch_size, d, n_samples]
 
-        norm_diff = diff / (bandwidth + 1e-10)  # Normalize differences by bandwidth
-        kernel = torch.exp(-0.5 * norm_diff.pow(2))  # Gaussian kernel
+        # Normalize kernel values
+        normalized_kernel_values = (
+            kernel / norm_const
+        )  # Shape: [batch_size, d, n_samples]
 
-        # Return normalized kernel values
-        return kernel / norm_const
-
-    def _compute_normalization_constant(
-        self, d: int, bandwidth: torch.Tensor | float, device: torch.device
-    ):
-        """
-        Compute the normalization constant for the multivariate Gaussian kernel.
-
-        Args:
-            d: int, dimensionality of the data.
-            bandwidth: torch.Tensor or float, the bandwidth parameter(s).
-            device: torch.device, device for computation.
-
-        Returns:
-            norm_const: torch.Tensor, normalization constant.
-        """
-        if isinstance(bandwidth, (float, int)):
-            # Scalar bandwidth applied equally to all dimensions
-            bandwidth = torch.full((d,), float(bandwidth), device=device)
-        elif isinstance(bandwidth, torch.Tensor):
-            # Ensure bandwidth is of the correct shape
-            if bandwidth.ndimension() == 1 and bandwidth.size(0) == d:
-                pass  # Correct shape [d]
-            elif bandwidth.ndimension() == 2 and bandwidth.size(1) == d:
-                # Adaptive bandwidth [batch_size, d]
-                bandwidth = bandwidth.mean(
-                    dim=0
-                )  # Take mean across batch for normalization
-            else:
-                raise ValueError(f"Unexpected bandwidth shape: {bandwidth.shape}")
-        else:
-            raise TypeError(f"Unsupported type for bandwidth: {type(bandwidth)}")
-
-        # Compute log-scale normalization constant
-        log_norm_const = d * torch.log(
-            torch.tensor(2 * torch.pi, device=device)
-        ) + torch.sum(torch.log(bandwidth))
-        return torch.exp(0.5 * log_norm_const)
+        return normalized_kernel_values
 
     def _compute_bandwidth(self, data: torch.Tensor):
         """
@@ -226,12 +225,12 @@ class MultivariateGaussianKDE(KernelDensityEstimator):
         """
         _, d, n_samples = data.shape
 
-        # Compute standard deviation for each dimension, unbiased=False avoids DoF issues
+        # Compute standard deviation for each dimension
         std_dev = torch.std(data, dim=2, unbiased=False)
 
         if d > 2:
             bandwidth = std_dev * (n_samples ** (-1 / (d + 4)))  # Scott's Rule
         else:
-            bandwidth = std_dev * ((4 / (3 * n_samples)) ** 0.2)  # Silverman's Ruleù
+            bandwidth = std_dev * ((4 / (3 * n_samples)) ** 0.2)  # Silverman's Rule
 
-        return torch.clamp(bandwidth, min=1e-12)  # Small value to prevent log(0))
+        return torch.clamp(bandwidth, min=1e-3)  # Prevent extremely small values

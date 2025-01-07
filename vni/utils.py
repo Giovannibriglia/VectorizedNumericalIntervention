@@ -101,7 +101,10 @@ def benchmarking_df(
 
         y_pred[t - batch_size : t, :] = get_max_pdf_values(pdf, y_values).cpu().numpy()
 
-    return y_true.cpu(), y_pred
+    if not density_value:
+        return y_true.cpu().numpy(), y_pred
+    else:
+        return 0, 0
 
 
 def setup_vni(
@@ -111,7 +114,6 @@ def setup_vni(
     estimator_config: Dict = None,
     device: str = "cuda",
 ):
-
     df = df.apply(lambda col: col.fillna(col.mean()), axis=0)
 
     Y_indices = [
@@ -203,32 +205,34 @@ def print_metrics(y_pred, y_true):
     y_pred = y_pred.flatten()
     y_true = y_true.flatten()
 
-    # Compute metrics
-    mae = mean_absolute_error(y_true, y_pred)
-    mse = mean_squared_error(y_true, y_pred)
-    r2 = r2_score(y_true, y_pred)
+    if len(np.unique(y_true)) > 10:
+        # Compute metrics
+        mae = mean_absolute_error(y_true, y_pred)
+        mse = mean_squared_error(y_true, y_pred)
+        r2 = r2_score(y_true, y_pred)
 
-    # Print metrics
-    print(f"Mean Absolute Error (MAE): {mae:.4f}")
-    print(f"Mean Squared Error (MSE): {mse:.4f}")
-    print(f"R-squared (R^2): {r2:.4f}")
+        # Print metrics
+        print(f"Mean Absolute Error (MAE): {mae:.4f}")
+        print(f"Mean Squared Error (MSE): {mse:.4f}")
+        print(f"R-squared (R^2): {r2:.4f}")
 
-    # Handle binary classification: Apply threshold to y_pred
-    if y_pred.ndim > 1 and y_pred.shape[1] > 1:
-        y_pred = np.argmax(y_pred, axis=1)  # For multi-class
     else:
-        y_pred = (y_pred >= 0.5).astype(int)  # For binary
+        # Handle binary classification: Apply threshold to y_pred
+        if y_pred.ndim > 1 and y_pred.shape[1] > 1:
+            y_pred = np.argmax(y_pred, axis=1)  # For multi-class
+        else:
+            y_pred = (y_pred >= 0.5).astype(int)  # For binary
 
-    y_true = y_true.flatten().astype(int)
-    acc = accuracy_score(y_true, y_pred)
-    precision = precision_score(y_true, y_pred, average="weighted")
-    recall = recall_score(y_true, y_pred, average="weighted")
-    f1 = f1_score(y_true, y_pred, average="weighted")
-    conf_matrix = confusion_matrix(y_true, y_pred)
+        y_true = y_true.flatten().astype(int)
+        acc = accuracy_score(y_true, y_pred)
+        precision = precision_score(y_true, y_pred, average="weighted")
+        recall = recall_score(y_true, y_pred, average="weighted")
+        f1 = f1_score(y_true, y_pred, average="weighted")
+        conf_matrix = confusion_matrix(y_true, y_pred)
 
-    print("Classification Metrics:")
-    print(f"  Accuracy: {acc:.4f}")
-    print(f"  Precision: {precision:.4f}")
-    print(f"  Recall: {recall:.4f}")
-    print(f"  F1 Score: {f1:.4f}")
-    print(f"  Confusion Matrix:\n{conf_matrix}")
+        print("Classification Metrics:")
+        print(f"  Accuracy: {acc:.4f}")
+        print(f"  Precision: {precision:.4f}")
+        print(f"  Recall: {recall:.4f}")
+        print(f"  F1 Score: {f1:.4f}")
+        print(f"  Confusion Matrix:\n{conf_matrix}")

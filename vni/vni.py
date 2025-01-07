@@ -111,7 +111,28 @@ class VNI:
             pdf1 = pdf[batch_index][target_feature_index]
             y_values1 = y_values[batch_index][target_feature_index]
 
-            plt.plot(y_values1, pdf1, label="predicted pdf")
+            if len(np.unique(y_values1)) > 10:  # continuous
+                plt.plot(y_values1, pdf1, label="predicted pdf")
+            else:  # discrete
+                unique_values, indices = np.unique(y_values1, return_inverse=True)
+                pdf_aggregated = np.zeros_like(unique_values, dtype=np.float64)
+
+                # Aggregate pdf1 for each unique value
+                for i, value in enumerate(unique_values):
+                    pdf_aggregated[i] = pdf1[
+                        indices == i
+                    ].mean()  # Example: average probabilities
+
+                # Plot the bar plot for discrete data
+                plt.bar(
+                    unique_values,
+                    pdf_aggregated,
+                    width=0.01,
+                    label="predicted pdf",
+                )
+
+                plt.xticks(unique_values)
+
             if true_values is not None:
                 true_values1 = true_values[batch_index][target_feature_index]
                 plt.scatter(
@@ -120,11 +141,41 @@ class VNI:
                     c="red",
                     label="ground truth",
                 )
+
+            plt.xlim(
+                (
+                    (
+                        np.min(y_values1)
+                        if np.max(y_values1) > np.min(y_values1)
+                        else np.min(y_values1) - 0.01
+                    ),
+                    (
+                        np.max(y_values1)
+                        if np.max(y_values1) > np.min(y_values1)
+                        else np.max(y_values1) + 0.01
+                    ),
+                )
+            )
         else:
-            plt.scatter(y_values, pdf, label="predicted density value")
+            plt.scatter(y_values, pdf, label="predicted density values")
+            plt.xlim(
+                (
+                    (
+                        np.min(y_values)
+                        if np.max(y_values) > np.min(y_values)
+                        else np.min(y_values) - 0.01
+                    ),
+                    (
+                        np.max(y_values)
+                        if np.max(y_values) > np.min(y_values)
+                        else np.max(y_values) + 0.01
+                    ),
+                )
+            )
 
         plt.xlabel("target feature values")
-        plt.ylim((-0.01, 1.01))
+        # print(np.all(pdf == 0))
+        # plt.ylim((-(np.min(pdf) + np.min(pdf) / 10), np.max(pdf) + np.max(pdf) / 10))
         plt.ylabel("PDF")
         plt.legend(loc="best")
         plt.grid(True)
